@@ -1,0 +1,35 @@
+# Changelog
+All notable changes to **Phrasely** will be documented in this file.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [Unreleased]
+### Added
+- Planned: PhraseDatasetLoader with ConceptNet + N-gram sources
+- Planned: Evaluation module for clustering quality metrics
+- Planned: GPU/CPU profiling support with `catch_time`
+
+---
+
+## [v0.1.0] – 2025-10-15
+### Added
+- Core modular pipeline (data → embeddings → reduction → clustering → medoids)
+- GPU/CPU HDBSCAN support with fallback logic
+- GPU/CPU TruncatedSVD reducer with auto-component clamping
+- Unified logging and timing (`catch_time`)
+- Unit tests for logger, SVD reducer, and timing
+- CI workflow via GitHub Actions (pytest)
+- PyCharm-friendly project structure and imports
+- Initial `data/sample_phrases.csv` test dataset
+
+### Notes
+Stable baseline for future development.  
+All tests pass, CI green, runs end-to-end on CPU or GPU.
+
+---
+
+[Unreleased]: https://github.com/mmastroianni/phrasely/compare/v0.1.0...HEAD
+[v0.1.0]: https://github.com/mmastroianni/phrasely/releases/tag/v0.1.0
