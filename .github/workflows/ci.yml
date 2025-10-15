@@ -2,37 +2,41 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
+    branches: [ main ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
+      - name: 🧩 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.10'
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
+      - name: 📦 Install dependencies (CPU mode)
         run: |
           python -m pip install --upgrade pip
-          pip install numpy pandas scikit-learn hdbscan pytest sentence-transformers
+          pip install -e .[dev]
+          pip install pytest flake8 black mypy
+          # Skip RAPIDS/cuML for CI runners (no GPU available)
+          echo "USE_GPU=0" >> $GITHUB_ENV
 
-      - name: Run tests
+      - name: ✅ Run tests
         env:
-          PYTHONPATH: src
-        run: pytest -v
+          USE_GPU: "0"
+        run: pytest -v --disable-warnings
+
+      - name: 🔍 Lint with flake8
+        run: flake8 src/phrasely tests
+
+      - name: 🔤 Check formatting with black
+        run: black --check src tests
+
+      - name: 🔠 Type check with mypy
+        run: mypy src/phrasely

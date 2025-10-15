@@ -1,29 +1,38 @@
-import importlib
+import os
 import logging
 
 logger = logging.getLogger(__name__)
 
 def is_gpu_available() -> bool:
-    """Check if CuPy is available and a GPU device is accessible."""
+    """
+    Returns True if a GPU is available and USE_GPU env var allows it.
+    Falls back to False if CUDA or CuPy isn't importable or explicitly disabled.
+    """
+    use_gpu_env = os.getenv("USE_GPU", "1") == "1"
+
+    if not use_gpu_env:
+        logger.info("USE_GPU=0 → Forcing CPU mode (CI or local override).")
+        return False
+
     try:
-        cp_spec = importlib.util.find_spec("cupy")
-        if cp_spec is None:
-            return False
-        import cupy as cp
-        _ = cp.cuda.Device(0)
+        import cupy  # noqa: F401
         return True
     except Exception:
         return False
 
 
 def get_device_info() -> str:
-    """Return a safe, human-readable device string."""
+    """
+    Returns human-readable GPU or CPU device info.
+    """
+    if not is_gpu_available():
+        return "CPU"
+
     try:
-        import cupy as cp
-        device = cp.cuda.Device(0)
-        props = cp.cuda.runtime.getDeviceProperties(device.id)
-        name = props.get("name", "Unnamed GPU")
+        import cupy
+        dev = cupy.cuda.runtime.getDevice()
+        name = cupy.cuda.runtime.getDeviceProperties(dev)["name"]
         return f"GPU: {name}"
     except Exception as e:
-        logger.warning(f"Could not query GPU info: {e}")
-        return "CPU"
+        logger.warning(f"Unable to query GPU device info: {e}")
+        return "GPU (unverified)"

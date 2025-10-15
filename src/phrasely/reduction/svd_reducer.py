@@ -1,22 +1,38 @@
 import logging
 import numpy as np
-from sklearn.decomposition import TruncatedSVD as CPUSVD
+from phrasely.utils.gpu_utils import is_gpu_available
 
 logger = logging.getLogger(__name__)
 
+# --- Always import CPU backend first ---
+from sklearn.decomposition import TruncatedSVD as CPUSVD  # ✅ always available
+
+# --- Try GPU backend (optional) ---
 try:
     from cuml.decomposition import TruncatedSVD as GPUSVD
-    GPU_AVAILABLE = True
+    GPU_IMPORTED = True
 except Exception:
-    GPU_AVAILABLE = False
+    GPUSVD = None
+    GPU_IMPORTED = False
 
 
 class SVDReducer:
-    """Performs dimensionality reduction using TruncatedSVD (GPU if available)."""
+    """
+    Reduces embedding dimensionality using TruncatedSVD (CPU or GPU).
+
+    - GPU used if available and requested.
+    - Falls back gracefully with clear logging.
+    - Validates 2D input and clamps n_components to < n_features.
+    """
 
     def __init__(self, n_components: int = 50, use_gpu: bool = False):
         self.n_components = n_components
-        self.use_gpu = use_gpu and GPU_AVAILABLE
+        self.user_requested_gpu = use_gpu
+
+        gpu_ok = GPU_IMPORTED and is_gpu_available()
+        if use_gpu and not gpu_ok:
+            logger.warning("GPU requested but unavailable → falling back to CPU.")
+        self.use_gpu = use_gpu and gpu_ok
 
     def reduce(self, X: np.ndarray) -> np.ndarray:
         # --- Validation ---
@@ -24,46 +40,30 @@ class SVDReducer:
             raise TypeError(f"SVDReducer expected numpy.ndarray, got {type(X)}")
 
         if X.ndim != 2:
-            logger.warning(f"SVDReducer: input must be 2D, got shape {X.shape}. Returning original.")
-            return X
+            raise ValueError(f"SVDReducer expected 2D array, got shape {getattr(X, 'shape', None)}")
 
         n_samples, n_features = X.shape
-        if n_samples < 2 or n_features < 2:
+        if n_samples < 2:
             logger.warning(f"SVDReducer: input too small for reduction (samples={n_samples}, features={n_features}).")
             return X
 
-        # --- Adjust component count safely ---
-        n_comps = min(self.n_components, n_features - 1, n_samples - 1)
-        if n_comps < self.n_components:
-            logger.info(f"SVDReducer: reducing n_components from {self.n_components} → {n_comps}.")
-        self.n_components = n_comps
+        n_components = min(self.n_components, n_features - 1)
+        if n_components < self.n_components:
+            logger.info(f"SVDReducer: reducing n_components from {self.n_components} → {n_components}.")
 
-        # --- Select backend ---
         backend = "GPU" if self.use_gpu else "CPU"
         logger.info(f"SVDReducer: using {backend} backend for TruncatedSVD.")
 
         try:
-            if self.use_gpu:
-                svd = GPUSVD(n_components=self.n_components, random_state=42)
+            if self.use_gpu and GPUSVD is not None:
+                svd = GPUSVD(n_components=n_components)
             else:
-                svd = CPUSVD(n_components=self.n_components, random_state=42)
+                svd = CPUSVD(n_components=n_components)
 
-            X_reduced = svd.fit_transform(X)
-            logger.info(f"SVDReducer: reduced {X.shape[1]} → {X_reduced.shape[1]} dimensions.")
-            return X_reduced
+            reduced = svd.fit_transform(X)
+            logger.info(f"SVDReducer: reduced {n_features} → {n_components} dimensions.")
+            return reduced
 
         except Exception as e:
-            # --- Graceful fallback ---
-            if self.use_gpu:
-                logger.warning(f"SVDReducer GPU failed: {e}. Falling back to CPU.")
-                try:
-                    svd = CPUSVD(n_components=self.n_components, random_state=42)
-                    X_reduced = svd.fit_transform(X)
-                    logger.info(f"SVDReducer: reduced {X.shape[1]} → {X_reduced.shape[1]} dimensions (CPU fallback).")
-                    return X_reduced
-                except Exception as e2:
-                    logger.warning(f"SVDReducer CPU fallback also failed: {e2}. Returning original input.")
-            else:
-                logger.warning(f"SVDReducer failed: {e}. Returning original input.")
-
+            logger.warning(f"SVDReducer failed: {e}. Returning original input.")
             return X

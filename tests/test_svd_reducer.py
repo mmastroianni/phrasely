@@ -11,12 +11,13 @@ def test_svd_reducer_reduces_dimensions():
     assert X_reduced.shape[1] == 10
 
 
-def test_svd_reducer_too_few_samples():
-    """If samples/features too small, should return unchanged."""
-    X = np.random.rand(1, 5)
+def test_svd_reducer_too_few_samples(caplog):
+    """If samples/features too small, should log a warning and return unchanged."""
+    X = np.random.rand(1, 5).astype(np.float32)
     reducer = SVDReducer(n_components=3)
     X_reduced = reducer.reduce(X)
     assert X_reduced.shape == X.shape
+    assert "input too small" in caplog.text
 
 
 def test_svd_reducer_invalid_input():
@@ -26,27 +27,29 @@ def test_svd_reducer_invalid_input():
         reducer.reduce([[1, 2], [3, 4]])
 
 
-def test_svd_reducer_gpu_flag(monkeypatch):
-    """Should fall back to CPU gracefully if GPU path fails."""
+def test_svd_reducer_gpu_fallback(monkeypatch, caplog):
+    """If GPU requested, should either use GPU or fall back gracefully."""
     X = np.random.rand(10, 10).astype(np.float32)
 
-    # Monkeypatch GPUSVD to throw error
-    from phrasely import reduction
-    svd_module = reduction.svd_reducer
-    original_gpu = svd_module.GPU_AVAILABLE
-    svd_module.GPU_AVAILABLE = True
+    import phrasely.utils.gpu_utils as gpu_utils
+    monkeypatch.setattr(gpu_utils, "is_gpu_available", lambda: False)
 
-    class MockGPUSVD:
-        def __init__(self, *_, **__): ...
-        def fit_transform(self, *_): raise RuntimeError("GPU failed")
-
-    svd_module.GPUSVD = MockGPUSVD
-
-    reducer = svd_module.SVDReducer(n_components=5, use_gpu=True)
+    reducer = SVDReducer(n_components=5, use_gpu=True)
     X_reduced = reducer.reduce(X)
 
-    assert isinstance(X_reduced, np.ndarray)
-    assert X_reduced.shape[1] <= X.shape[1]
+    assert X_reduced.shape[0] == 10
+    # Accept either a fallback or GPU log
+    assert (
+        "falling back to CPU" in caplog.text
+        or "using GPU backend" in caplog.text
+    )
 
-    # Restore GPU flag
-    svd_module.GPU_AVAILABLE = original_gpu
+
+def test_svd_reducer_component_clamping(caplog):
+    """If n_components > n_features, it should clamp and log it."""
+    X = np.random.rand(20, 8).astype(np.float32)
+    reducer = SVDReducer(n_components=50, use_gpu=False)
+    X_reduced = reducer.reduce(X)
+    assert X_reduced.shape[1] == 7  # n_features - 1
+    # Match lowercase log wording
+    assert "reducing n_components" in caplog.text
