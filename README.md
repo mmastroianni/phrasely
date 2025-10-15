@@ -1,4 +1,5 @@
 # Phrasely – Phrase Clustering and Embedding Pipeline (GPU‑Accelerated)
+![CI](https://github.com/mmastroianni/phrasely/actions/workflows/ci.yml/badge.svg)
 
 ## 🧠 Overview
 Phrasely is a modular, GPU‑accelerated pipeline for clustering and analyzing large phrase datasets. It uses **Sentence Transformers** for embeddings, **SVD/PCA** for dimensionality reduction, and **cuML HDBSCAN** for clustering on NVIDIA GPUs via the **RAPIDS** suite. The project is structured for clean testability, reproducibility, and eventual open‑source release.
