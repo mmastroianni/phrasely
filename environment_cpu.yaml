@@ -1,0 +1,26 @@
+name: phrasely-cpu
+env_name: cpu
+env_type: development
+channels:
+- conda-forge
+- pytorch
+channel_priority: strict
+dependencies:
+- python=3.10
+- numpy=1.26.*
+- pandas=2.2.*
+- scikit-learn=1.5.*
+- hdbscan
+- pytorch=2.3.*
+- sentence-transformers=3.0.*
+- tqdm
+- psutil
+- pyyaml
+- joblib
+- jupyterlab
+- black
+- flake8
+- mypy
+- pytest
+- pip:
+- rapidfuzz>=3.6.1
