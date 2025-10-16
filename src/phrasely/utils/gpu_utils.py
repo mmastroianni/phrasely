@@ -1,12 +1,14 @@
-import os
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
 
 def is_gpu_available() -> bool:
     """
     Returns True if a GPU is available and USE_GPU env var allows it.
-    Falls back to False if CUDA or CuPy isn't importable or explicitly disabled.
+    Falls back to False if CUDA or CuPy isn't importable or
+    explicitly disabled.
     """
     use_gpu_env = os.getenv("USE_GPU", "1") == "1"
 
@@ -16,6 +18,7 @@ def is_gpu_available() -> bool:
 
     try:
         import cupy  # noqa: F401
+
         return True
     except Exception:
         return False
@@ -30,6 +33,7 @@ def get_device_info() -> str:
 
     try:
         import cupy
+
         dev = cupy.cuda.runtime.getDevice()
         name = cupy.cuda.runtime.getDeviceProperties(dev)["name"]
         return f"GPU: {name}"

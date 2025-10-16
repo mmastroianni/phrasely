@@ -1,11 +1,13 @@
-import os
 import logging
+from pathlib import Path
+
 import pandas as pd
 import requests
-from pathlib import Path
+
 from phrasely.data_loading.base_loader import BaseLoader
 
 logger = logging.getLogger(__name__)
+
 
 class PhraseDatasetLoader(BaseLoader):
     """Downloads or loads a large phrase dataset and supports sampling."""
@@ -32,7 +34,11 @@ class PhraseDatasetLoader(BaseLoader):
 
         logger.info("Processing ConceptNet edges into phrases...")
         df = pd.read_csv(
-            tmp_file, sep="\t", header=None, usecols=[2, 3], names=["start", "end"]
+            tmp_file,
+            sep="\t",
+            header=None,
+            usecols=[2, 3],
+            names=["start", "end"],
         )
         phrases = pd.concat([df["start"], df["end"]]).dropna().unique()
         df_out = pd.DataFrame({"phrase": phrases})

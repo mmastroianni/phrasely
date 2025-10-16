@@ -1,4 +1,5 @@
 import logging
+
 from phrasely.utils.logger import setup_logger
 
 

@@ -1,6 +1,8 @@
 import logging
 import time
+
 import pytest
+
 from phrasely.utils.timing import catch_time
 
 

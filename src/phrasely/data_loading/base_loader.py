@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List
 
+
 class BaseLoader(ABC):
     """Abstract base class for phrase data loaders."""
 

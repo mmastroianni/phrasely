@@ -1,5 +1,6 @@
 import logging
 
+
 def test_basic_caplog_text(caplog):
     """Example 1: Capture all log output as text."""
     logger = logging.getLogger("phrasely.demo")
@@ -52,6 +53,7 @@ def test_dynamic_log_level_change(caplog):
 
 def test_combining_with_asserts(caplog):
     """Example 4: Simulate a function that logs and returns data."""
+
     def example_fn(x):
         logger = logging.getLogger("phrasely.example_fn")
         if x < 0:

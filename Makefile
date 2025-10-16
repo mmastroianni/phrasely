@@ -3,20 +3,21 @@
 .PHONY: install test lint format clean
 
 install:
-	@pip install -e .[gpu,dev]
+	pip install -e .[gpu,dev]
 
 test:
-	@pytest -v --disable-warnings
+	pytest -v --disable-warnings
 
 lint:
-	@flake8 src/phrasely tests
-	@mypy src/phrasely
+	flake8 --config pytest.ini src/phrasely tests
+	mypy --config-file mypy.ini src/phrasely
 
 format:
-	@black src tests
+	black src tests
+	isort src tests
 
 clean:
-	@rm -rf build dist .pytest_cache *.egg-info
+	rm -rf build dist .pytest_cache .mypy_cache *.egg-info
 
 # ==============================
 # Release Automation

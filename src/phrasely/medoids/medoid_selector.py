@@ -1,7 +1,9 @@
-import numpy as np
 import logging
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
+
 
 class MedoidSelector:
     """Selects representative medoids for each cluster."""
@@ -20,5 +22,8 @@ class MedoidSelector:
             medoid_idx = idx[len(idx) // 2]
             medoids.append(phrases[medoid_idx])
 
-        logger.info(f"Selected {len(medoids)} medoids across {len(unique_labels)} clusters.")
+        logger.info(
+            f"Selected {len(medoids)} medoids across {len(unique_labels)}"
+            + " clusters."
+        )
         return medoids

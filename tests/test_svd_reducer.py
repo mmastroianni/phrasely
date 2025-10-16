@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+
 from phrasely.reduction.svd_reducer import SVDReducer
 
 
@@ -12,7 +13,10 @@ def test_svd_reducer_reduces_dimensions():
 
 
 def test_svd_reducer_too_few_samples(caplog):
-    """If samples/features too small, should log a warning and return unchanged."""
+    """
+    If samples/features too small, should log a warning and
+    return unchanged.
+    """
     X = np.random.rand(1, 5).astype(np.float32)
     reducer = SVDReducer(n_components=3)
     X_reduced = reducer.reduce(X)
@@ -32,6 +36,7 @@ def test_svd_reducer_gpu_fallback(monkeypatch, caplog):
     X = np.random.rand(10, 10).astype(np.float32)
 
     import phrasely.utils.gpu_utils as gpu_utils
+
     monkeypatch.setattr(gpu_utils, "is_gpu_available", lambda: False)
 
     reducer = SVDReducer(n_components=5, use_gpu=True)
@@ -39,10 +44,7 @@ def test_svd_reducer_gpu_fallback(monkeypatch, caplog):
 
     assert X_reduced.shape[0] == 10
     # Accept either a fallback or GPU log
-    assert (
-        "falling back to CPU" in caplog.text
-        or "using GPU backend" in caplog.text
-    )
+    assert "falling back to CPU" in caplog.text or "using GPU backend" in caplog.text
 
 
 def test_svd_reducer_component_clamping(caplog):

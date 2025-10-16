@@ -1,16 +1,16 @@
-from phrasely.data_loading.csv_loader import CSVLoader
-from phrasely.embeddings.phrase_embedder import PhraseEmbedder
-from phrasely.reduction.svd_reducer import SVDReducer
-from phrasely.clustering.hdbscan_clusterer import HDBSCANClusterer
-from phrasely.medoids.medoid_selector import MedoidSelector
-from phrasely.utils.gpu_utils import get_device_info
-from phrasely.utils.logger import setup_logger
 import warnings
 
+from phrasely.clustering.hdbscan_clusterer import HDBSCANClusterer
+from phrasely.data_loading.csv_loader import CSVLoader
+from phrasely.embeddings.phrase_embedder import PhraseEmbedder
+from phrasely.medoids.medoid_selector import MedoidSelector
+from phrasely.reduction.svd_reducer import SVDReducer
+from phrasely.utils.logger import setup_logger
 from phrasely.utils.timing import catch_time
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 logger = setup_logger(__name__)
+
 
 def run_pipeline(csv_path: str):
     logger.info("Starting pipeline...")
@@ -43,6 +43,7 @@ def run_pipeline(csv_path: str):
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 2:
         logger.error("Usage: python -m src.phrasely.pipeline <path_to_csv>")
     else:

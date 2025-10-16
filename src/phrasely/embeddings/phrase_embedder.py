@@ -1,6 +1,8 @@
-from sentence_transformers import SentenceTransformer
-import numpy as np
 from typing import List
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
 
 class PhraseEmbedder:
     """Generates embeddings for a list of short phrases."""
