@@ -35,7 +35,7 @@ jobs:
         run: pytest -v --disable-warnings
 
       - name: 🔍 Lint with flake8
-        run: flake8 --config pyproject.toml src/phrasely tests
+        run: flake8 --config .flake8 src/phrasely tests
 
       - name: 🔤 Check formatting with black
         run: black --check src tests
