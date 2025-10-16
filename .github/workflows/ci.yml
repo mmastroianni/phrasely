@@ -18,15 +18,15 @@ jobs:
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.10'
 
       - name: 📦 Install dependencies (CPU mode)
         run: |
           python -m pip install --upgrade pip
-          # Install only dev extras (skip GPU deps)
-          pip install -e ".[dev]" --no-deps
-          # Make sure core tools are present
-          pip install pytest flake8 black mypy
+          # Explicit install of runtime deps (no GPU libs)
+          pip install numpy pandas scikit-learn hdbscan sentence-transformers tqdm psutil pyyaml joblib
+          # Dev + linting tools
+          pip install pytest flake8 black mypy types-requests isort
           echo "USE_GPU=0" >> $GITHUB_ENV
 
       - name: ✅ Run tests
@@ -35,7 +35,7 @@ jobs:
         run: pytest -v --disable-warnings
 
       - name: 🔍 Lint with flake8
-        run: flake8 src/phrasely tests
+        run: flake8 --config pyproject.toml src/phrasely tests
 
       - name: 🔤 Check formatting with black
         run: black --check src tests
