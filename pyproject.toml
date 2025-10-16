@@ -8,8 +8,9 @@ name = "phrasely"
 version = "0.1.0"
 description = "Phrase clustering and embedding pipeline (GPU default)"
 authors = [
-{ name = "Michael Mastroianni", email = "mmastroianni@gmail.com" }
+  { name = "Michael Mastroianni", email = "mmastroianni@gmail.com" }
 ]
+
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -46,4 +47,5 @@ combine_as_imports = true
 
 [flake8]
 max-line-length=88
-extend-ignore = E203, W503
+extend-ignore = "E203, W503"
+
