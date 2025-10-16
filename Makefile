@@ -1,20 +1,31 @@
-# Makefile for Phrasely (GPU-default)
+# Makefile for Phrasely (GPU-default, CI-aligned)
 
-.PHONY: install test lint format clean
+.PHONY: install test lint format clean release changelog
+
+# ==============================
+# Environment setup
+# ==============================
 
 install:
-	pip install -e .[gpu,dev]
+	# Install both GPU and dev extras locally
+	pip install -e ".[gpu,dev]"
+
+# ==============================
+# Quality checks
+# ==============================
 
 test:
 	pytest -v --disable-warnings
 
 lint:
-	flake8 --config pytest.ini src/phrasely tests
+	# Use .flake8 for linting and mypy.ini for type checking
+	flake8 src/phrasely tests
 	mypy --config-file mypy.ini src/phrasely
 
 format:
-	black src tests
+	# Ensure consistent formatting with Black + Isort
 	isort src tests
+	black src tests
 
 clean:
 	rm -rf build dist .pytest_cache .mypy_cache *.egg-info

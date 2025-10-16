@@ -18,14 +18,15 @@ jobs:
       - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: 📦 Install dependencies (CPU mode)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
+          # Install only dev extras (skip GPU deps)
+          pip install -e ".[dev]" --no-deps
+          # Make sure core tools are present
           pip install pytest flake8 black mypy
-          # Skip RAPIDS/cuML for CI runners (no GPU available)
           echo "USE_GPU=0" >> $GITHUB_ENV
 
       - name: ✅ Run tests
