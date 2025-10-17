@@ -48,3 +48,4 @@ dependencies:
   # Optional extras
   - pip:
       - rapidfuzz>=3.6.1
+      - types-requests

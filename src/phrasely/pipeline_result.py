@@ -74,9 +74,7 @@ class PipelineResult:
             labels = data["labels"]
             medoids = data["medoids"].tolist()
             medoid_indices = (
-                data["medoid_indices"].tolist()
-                if "medoid_indices" in data
-                else None
+                data["medoid_indices"].tolist() if "medoid_indices" in data else None
             )
 
         # Load metadata JSON

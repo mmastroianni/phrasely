@@ -43,13 +43,13 @@ class TwoStageReducer:
     """
 
     def __init__(
-            self,
-            svd_components: int = 100,
-            umap_components: int = 15,
-            use_gpu: bool = True,
-            n_neighbors: int = 15,
-            min_dist: float = 0.1,
-            metric: str = "cosine",
+        self,
+        svd_components: int = 100,
+        umap_components: int = 15,
+        use_gpu: bool = True,
+        n_neighbors: int = 15,
+        min_dist: float = 0.1,
+        metric: str = "cosine",
     ):
         self.svd_components = svd_components
         self.umap_components = umap_components
@@ -73,8 +73,7 @@ class TwoStageReducer:
         # --- Stage 1: SVD ---
         if self.use_gpu:
             try:
-                svd = (
-                    GPUSVD(n_components=self.svd_components))
+                svd = GPUSVD(n_components=self.svd_components)
                 X_svd = svd.fit_transform(X)
                 logger.info(
                     f"Stage 1 (GPU SVD): reduced {n_cols} → "

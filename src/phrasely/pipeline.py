@@ -59,8 +59,8 @@ def run_pipeline(
     scale_factor = max(1, 4.0 / max(1, vram_gb)) if vram_gb > 0 else 1.0
     max_rows_gpu = int(_BASE_ROWS / scale_factor)
     logger.info(
-        f"Adaptive GPU limits — SVD: {max_rows_gpu:,} rows, " +
-        f"HDBSCAN: {max_rows_gpu:,} rows."
+        f"Adaptive GPU limits — SVD: {max_rows_gpu:,} rows, "
+        + f"HDBSCAN: {max_rows_gpu:,} rows."
     )
 
     # --- Stage 1: Load + Embed ---

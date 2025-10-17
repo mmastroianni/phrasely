@@ -33,9 +33,10 @@ class WikipediaLoader(BaseLoader):
             logger.info(f"Using cached Wikipedia titles at {self.file_path}")
             return
 
-        url = \
-            ("https://dumps.wikimedia.org/enwiki/latest/"
-             + "enwiki-latest-all-titles-in-ns0.gz")
+        url = (
+            "https://dumps.wikimedia.org/enwiki/latest/"
+            + "enwiki-latest-all-titles-in-ns0.gz"
+        )
         logger.info(f"Downloading Wikipedia titles from {url} ... (≈150 MB compressed)")
         response = requests.get(url, stream=True)
         response.raise_for_status()

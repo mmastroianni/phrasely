@@ -9,6 +9,7 @@ except ImportError:
     cupy = None
     logger.warning("CuPy not available – GPU utilities limited to CPU fallback.")
 
+
 def is_gpu_available() -> bool:
     if cupy is None:
         return False
@@ -17,7 +18,6 @@ def is_gpu_available() -> bool:
         return True
     except Exception:
         return False
-
 
 
 def get_device_info() -> dict:

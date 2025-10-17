@@ -102,9 +102,10 @@ python -m phrasely.pipeline --input data/sample_phrases.csv --output results.csv
 
 ## 🧰 Developer Notes
 - Use `pytest -v` to run all tests.
-- Use `black`, `flake8`, and `mypy` for formatting/linting.
-- `make install` → editable dev install.
-- `make gpu-test` (optional) → run GPU sanity check.
+- Use `make format` to auto-format the codebase with **Black** and **isort**.
+- Use `make lint` to run **flake8** (style) and **mypy** (type checking).
+- Use `make install` to generate editable dev install.
+- Use `make gpu-test` (optional) to run GPU sanity check.
 
 ---
 

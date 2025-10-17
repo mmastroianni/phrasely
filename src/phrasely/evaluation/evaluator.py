@@ -38,7 +38,9 @@ class ClusterEvaluator:
         # --- silhouette ---
         if n_clusters <= 1 or np.sum(mask) < 2:
             sil = float("nan")
-            logger.warning("Silhouette skipped: only one cluster or insufficient samples.")
+            logger.warning(
+                "Silhouette skipped: only one cluster or insufficient samples."
+            )
         else:
             try:
                 sil = float(silhouette_score(X[mask], y[mask], metric=self.metric))
@@ -102,4 +104,4 @@ def _patched_init(self, *args, **kwargs):
     return orig_init(self, *args, **kwargs)
 
 
-PipelineResult.__init__ = _patched_init
+setattr(PipelineResult, "__init__", _patched_init)

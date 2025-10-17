@@ -1,11 +1,12 @@
 import logging
-from typing import List, Sequence, Tuple, Optional
+from typing import List, Sequence
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 try:
     import cupy as cp  # type: ignore
+
     _CUPY_AVAILABLE = True
 except Exception:
     cp = None  # type: ignore
@@ -19,7 +20,8 @@ class MedoidSelector:
     For clusters with size <= exact_threshold, computes the *true medoid*:
       argmin_i sum_j distance(x_i, x_j).
 
-    For larger clusters, approximates by choosing the point nearest to the cluster centroid
+    For larger clusters, approximates by choosing the point nearest
+    to the cluster centroid
     (cosine: nearest to normalized mean vector; euclidean: nearest to mean).
 
     Parameters
@@ -27,7 +29,8 @@ class MedoidSelector:
     metric : {"cosine", "euclidean"}
         Distance metric for medoid selection. Default "cosine".
     exact_threshold : int
-        Max cluster size to compute exact medoid (O(n^2) time, chunked memory). Default 1500.
+        Max cluster size to compute exact medoid (O(n^2) time, chunked memory).
+        Default 1500.
     chunk_size : int
         Row-block size for chunked pairwise computations. Default 2048.
     prefer_gpu : bool
@@ -81,7 +84,9 @@ class MedoidSelector:
             medoid_indices.append(medoid_global)
             medoid_phrases.append(phrases[medoid_global])
 
-        logger.info(f"Selected {len(medoid_phrases)} medoids across {len(unique)} clusters.")
+        logger.info(
+            f"Selected {len(medoid_phrases)} medoids across {len(unique)} clusters."
+        )
 
         # ✅ Return only phrases unless explicitly asked for indices
         if self.return_indices:
@@ -124,7 +129,9 @@ class MedoidSelector:
                     block = Xp[start:stop]
                     block_norms = xp.sum(block * block, axis=1)
                     dots = block @ Xp.T
-                    row_sums_sq = n * block_norms + total_norm_sum - 2.0 * xp.sum(dots, axis=1)
+                    row_sums_sq = (
+                        n * block_norms + total_norm_sum - 2.0 * xp.sum(dots, axis=1)
+                    )
                     mins_idx = xp.argmin(row_sums_sq)
                     mins_val = row_sums_sq[mins_idx]
                     candidate_i = int(start + int(mins_idx))

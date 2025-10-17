@@ -1,5 +1,5 @@
 import logging
-
+from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -10,13 +10,13 @@ def plot_clusters_2d(
     coords: np.ndarray,
     labels: np.ndarray,
     texts=None,
-    alpha: float = None,
-    point_size: int = None,
+    alpha: Optional[float] = None,
+    point_size: Optional[int] = None,
     clip_outliers: bool = True,
     annotate: bool = True,
-    savepath: str | None = None,
-    dbcv_score: float | None = None,
-    phrases: list[str] | None = None,
+    savepath: Optional[str] = None,
+    dbcv_score: Optional[float] = None,
+    phrases: Optional[list[str]] = None,
 ):
     """
     Plot 2D cluster visualization from reduced embeddings.
@@ -65,7 +65,7 @@ def plot_clusters_2d(
 
     plt.figure(figsize=(10, 7))
     unique_labels = sorted(set(labels))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
+    colors = plt.get_cmap("tab10")(np.linspace(0, 1, len(unique_labels)))
 
     for color, lbl in zip(colors, unique_labels):
         mask = labels == lbl

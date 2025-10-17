@@ -9,7 +9,10 @@ try:
     from datasets import load_dataset
 except ImportError:
     load_dataset = None
-    logger.warning("🤖 'datasets' not available — CC100Loader will use dummy data in CI or minimal environments.")
+    logger.warning(
+        "🤖 'datasets' not available — CC100Loader will use dummy data "
+        + "in CI or minimal environments."
+    )
 
 
 class CC100Loader:
@@ -64,7 +67,9 @@ class CC100Loader:
             # Optional down-sampling
             if self.max_phrases is not None and len(df) > self.max_phrases:
                 df = df.sample(n=self.max_phrases, random_state=self.seed)
-                logger.info(f"Sampled {len(df):,} rows (max_phrases={self.max_phrases})")
+                logger.info(
+                    f"Sampled {len(df):,} rows (max_phrases={self.max_phrases})"
+                )
 
             # Clean up and return
             df = df.dropna(subset=["phrase"])

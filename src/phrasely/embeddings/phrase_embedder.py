@@ -1,6 +1,7 @@
 import hashlib
 import logging
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import torch
@@ -32,7 +33,7 @@ class PhraseEmbedder:
         self.chunk_size = chunk_size
 
         # --- Detect VRAM ---
-        self.vram_gb = 0
+        self.vram_gb: float = 0.0
         if self.device == "cuda":
             try:
                 props = torch.cuda.get_device_properties(0)
@@ -49,6 +50,7 @@ class PhraseEmbedder:
             self.model_name = "paraphrase-MiniLM-L6-v2"
 
         # --- Batch size heuristic ---
+        self.batch_size: int
         if batch_size:
             self.batch_size = batch_size
         elif self.vram_gb >= 10:
@@ -74,7 +76,7 @@ class PhraseEmbedder:
 
     # ---------------------------------------------------------------------
 
-    def embed(self, phrases: list[str]) -> np.ndarray:
+    def embed(self, phrases: List[str]) -> np.ndarray:
         """Return embeddings with chunked caching to disk."""
         cache_path = self._cache_path(phrases)
         tmp_path = cache_path.with_suffix(".partial.npy")
@@ -129,13 +131,11 @@ class PhraseEmbedder:
             while True:
                 try:
                     data.append(np.load(f))
-                except ValueError:
-                    break
-                except EOFError:
+                except (ValueError, EOFError):
                     break
         return np.concatenate(data, axis=0)
 
-    def _cache_path(self, phrases: list[str]) -> Path:
+    def _cache_path(self, phrases: List[str]) -> Path:
         sample = "\n".join(phrases[:1000])
         data_hash = hashlib.md5(sample.encode("utf-8")).hexdigest()
         name = f"embeddings_{self.model_name.replace('/', '-')}_{data_hash}.npy"
