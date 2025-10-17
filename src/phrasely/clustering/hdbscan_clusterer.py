@@ -1,17 +1,12 @@
 import logging
-
 import numpy as np
-
 from phrasely.utils.gpu_utils import is_gpu_available
+from hdbscan import HDBSCAN as CPUHDBSCAN
 
 logger = logging.getLogger(__name__)
 
-# Always ensure a CPU fallback exists
-from hdbscan import HDBSCAN as CPUHDBSCAN  # noqa: E402
-
 try:
     from cuml.cluster import HDBSCAN as GPUHDBSCAN
-
     GPU_IMPORTED = True
 except Exception:
     GPUHDBSCAN = None
@@ -22,8 +17,9 @@ class HDBSCANClusterer:
     """
     Clusters embeddings using HDBSCAN with optional GPU acceleration.
 
-    - If use_gpu=True, GPU is used only if cuML + CUDA are available.
-    - Otherwise, falls back gracefully to CPU.
+    - GPU used if available and requested.
+    - Falls back gracefully with clear logging.
+    - Validates 2D input and returns all -1s on failure instead of random noise.
     """
 
     def __init__(
@@ -33,9 +29,9 @@ class HDBSCANClusterer:
         min_samples: int | None = None,
         **kwargs,
     ):
-        self.user_requested_gpu = use_gpu
         self.min_cluster_size = min_cluster_size
         self.min_samples = min_samples
+        self.user_requested_gpu = use_gpu
         self.kwargs = kwargs
 
         gpu_ok = GPU_IMPORTED and is_gpu_available()
@@ -44,12 +40,29 @@ class HDBSCANClusterer:
         self.use_gpu = use_gpu and gpu_ok
 
     def cluster(self, X: np.ndarray) -> np.ndarray:
-        """Run HDBSCAN on the input array and return cluster labels."""
+        # --- Validation ---
+        if not isinstance(X, np.ndarray):
+            raise TypeError(f"HDBSCANClusterer expected numpy.ndarray, got {type(X)}")
+
+        if X.ndim != 2:
+            raise ValueError(
+                "HDBSCANClusterer expected 2D array, got "
+                + f"shape {getattr(X, 'shape', None)}"
+            )
+
+        n_samples = X.shape[0]
+        if n_samples < 2:
+            logger.warning(
+                "HDBSCANClusterer: input too small for clustering "
+                f"(samples={n_samples}). Returning all -1s."
+            )
+            return np.full(n_samples, -1)
+
         backend = "GPU" if self.use_gpu else "CPU"
-        logger.info(f"HDBSCAN: using {backend} backend.")
+        logger.info(f"HDBSCANClusterer: using {backend} backend.")
 
         try:
-            cluster_cls = GPUHDBSCAN if self.use_gpu and GPUHDBSCAN else CPUHDBSCAN
+            cluster_cls = GPUHDBSCAN if (self.use_gpu and GPUHDBSCAN) else CPUHDBSCAN
             clusterer = cluster_cls(
                 min_cluster_size=self.min_cluster_size,
                 min_samples=(
@@ -61,11 +74,9 @@ class HDBSCANClusterer:
             )
             labels = clusterer.fit_predict(X)
             n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-            logger.info(f"HDBSCAN: found {n_clusters} clusters (+ noise).")
+            logger.info(f"HDBSCANClusterer: found {n_clusters} clusters (+ noise).")
             return labels
 
         except Exception as e:
-            logger.warning(f"HDBSCAN failed: {e}. Returning mock labels.")
-            rng = np.random.default_rng(42)
-            k = min(3, max(1, X.shape[0] // 50))
-            return rng.integers(low=0, high=k, size=X.shape[0])
+            logger.warning(f"HDBSCANClusterer failed: {e}. Returning all -1 labels.")
+            return np.full(n_samples, -1)

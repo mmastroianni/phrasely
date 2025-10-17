@@ -1,23 +1,37 @@
 name: phrasely-gpu
 env_name: gpu
 env_type: development
+
 channels:
   - rapidsai
   - nvidia
+  - pytorch
   - conda-forge
 channel_priority: strict
+
 dependencies:
   - python=3.10
+
+  # RAPIDS 24.06 core (CUDA-12.x compatible)
   - cudf=24.06
   - cuml=24.06
   - cugraph=24.06
   - cupy
+
+  # Core scientific + ML stack
   - numpy=1.26.*
   - pandas=2.2.*
   - scikit-learn=1.5.*
   - hdbscan
-  - pytorch=2.3.*
+
+  # GPU PyTorch stack
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1       # ✅ ensures GPU build of PyTorch
   - sentence-transformers=3.0.*
+
+  # Utilities and dev tools
   - tqdm
   - psutil
   - pyyaml
@@ -27,5 +41,7 @@ dependencies:
   - flake8
   - mypy
   - pytest
+
+  # Pip-only extras
   - pip:
       - rapidfuzz>=3.6.1

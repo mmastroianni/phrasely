@@ -1,42 +1,40 @@
+import torch
+import cupy
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
-
 def is_gpu_available() -> bool:
-    """
-    Returns True if a GPU is available and USE_GPU env var allows it.
-    Falls back to False if CUDA or CuPy isn't importable or
-    explicitly disabled.
-    """
-    use_gpu_env = os.getenv("USE_GPU", "1") == "1"
-
-    if not use_gpu_env:
-        logger.info("USE_GPU=0 → Forcing CPU mode (CI or local override).")
-        return False
-
+    """Return True if either torch or CuPy can see a CUDA device."""
     try:
-        import cupy  # noqa: F401
-
+        if torch.cuda.is_available():
+            return True
+    except Exception:
+        pass
+    try:
+        _ = cupy.cuda.runtime.getDeviceCount()
         return True
     except Exception:
-        return False
+        pass
+    return False
 
 
-def get_device_info() -> str:
-    """
-    Returns human-readable GPU or CPU device info.
-    """
-    if not is_gpu_available():
-        return "CPU"
+def get_device_info() -> dict:
+    """Return a dictionary with total VRAM (in GB) and device name, or fallback info."""
+    info = {"name": "CPU", "total": 0.0}
 
     try:
-        import cupy
-
-        dev = cupy.cuda.runtime.getDevice()
-        name = cupy.cuda.runtime.getDeviceProperties(dev)["name"]
-        return f"GPU: {name}"
+        if torch.cuda.is_available():
+            idx = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(idx)
+            total_gb = round(props.total_memory / (1024 ** 3), 1)
+            info = {"name": props.name, "total": total_gb}
+        elif cupy.cuda.runtime.getDeviceCount() > 0:
+            dev = cupy.cuda.Device()
+            attrs = dev.attributes
+            total_gb = round(dev.mem_info[1] / (1024 ** 3), 1)
+            info = {"name": f"CuPy device {dev.id}", "total": total_gb}
     except Exception as e:
-        logger.warning(f"Unable to query GPU device info: {e}")
-        return "GPU (unverified)"
+        logger.warning(f"Could not query GPU info: {e}")
+
+    return info

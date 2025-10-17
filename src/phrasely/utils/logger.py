@@ -20,18 +20,23 @@ class ColorFormatter(logging.Formatter):
         return f"{color}{message}{self.RESET}"
 
 
-def setup_logger(name: str = "phrasely", level: int = logging.INFO):
-    """Return a configured logger with both console and file output."""
+def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
+    """Set up a clean, single-stream logger (no color, no duplication)."""
+    # Remove any pre-existing handlers (e.g., Jupyter root handler)
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+
+    # Configure base logging once
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",       # clean, no color or level prefixes
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
+
+    # Return a module-specific logger
     logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger  # Avoid reinitializing if already set
-
+    logger.propagate = False       # prevent double emission through root
     logger.setLevel(level)
-
-    # Console handler with colors
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_formatter = ColorFormatter("[%(levelname)s] %(message)s")
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-
     return logger
