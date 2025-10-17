@@ -1,6 +1,6 @@
 # tests/test_medoid_selector.py
 import numpy as np
-import pytest
+
 from phrasely.medoids.medoid_selector import MedoidSelector
 
 
@@ -36,13 +36,17 @@ def test_multiple_clusters():
     phrases = ["p1", "p2", "p3", "p4"]
     embeddings = np.array(
         [
-            [0.0], [0.1],  # cluster 0
-            [5.0], [5.1],  # cluster 1
+            [0.0],
+            [0.1],  # cluster 0
+            [5.0],
+            [5.1],  # cluster 1
         ]
     )
     labels = np.array([0, 0, 1, 1])
 
-    selector = MedoidSelector(metric="euclidean", exact_threshold=10, return_indices=True)
+    selector = MedoidSelector(
+        metric="euclidean", exact_threshold=10, return_indices=True
+    )
     medoids, indices = selector.select(phrases, embeddings, labels)
     assert medoids == ["p1", "p3"]
     assert all(isinstance(i, int) for i in indices)

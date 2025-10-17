@@ -1,9 +1,11 @@
-import logging
-import requests
 import gzip
 import io
-import pandas as pd
+import logging
 from pathlib import Path
+
+import pandas as pd
+import requests
+
 from phrasely.data_loading.base_loader import BaseLoader
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,9 @@ class WikipediaLoader(BaseLoader):
             logger.info(f"Using cached Wikipedia titles at {self.file_path}")
             return
 
-        url = "https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-all-titles-in-ns0.gz"
+        url = \
+            ("https://dumps.wikimedia.org/enwiki/latest/"
+             + "enwiki-latest-all-titles-in-ns0.gz")
         logger.info(f"Downloading Wikipedia titles from {url} ... (≈150 MB compressed)")
         response = requests.get(url, stream=True)
         response.raise_for_status()
@@ -46,7 +50,9 @@ class WikipediaLoader(BaseLoader):
         # Basic cleaning
         df = df[
             df["phrase"].str.len().between(3, 80)  # drop very short/long
-            & df["phrase"].str.match(r"^[A-Za-z0-9 ,()'\-\–\–:;!?.]+$")  # filter symbols
+            & df["phrase"].str.match(
+                r"^[A-Za-z0-9 ,()'\-\–\–:;!?.]+$"
+            )  # filter symbols
         ]
 
         df.to_parquet(self.file_path)

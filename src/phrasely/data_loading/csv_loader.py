@@ -1,7 +1,9 @@
-import pandas as pd
 import logging
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
+
 
 class CSVLoader:
     def __init__(self, input_path: str):

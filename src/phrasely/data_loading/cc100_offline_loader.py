@@ -1,118 +1,162 @@
 import logging
 from pathlib import Path
+from typing import Generator, Optional
+
+import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from datasets import Dataset
-from phrasely.data_loading.base_loader import BaseLoader
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
 
-class CC100OfflineLoader(BaseLoader):
+class CC100OfflineLoader:
     """
-    Loads existing CC100 Arrow shards from disk and filters them into phrases.
+    Loads a pre-downloaded subset of the CC100 dataset from local
+    Arrow or Parquet files.
 
-    - Reads pre-downloaded .arrow shards (no network).
-    - Writes each chunk to its own Parquet part file to avoid overwriting.
-    - Optionally merges all parts into one Parquet file at the end.
+    Supports both in-memory (`load()`) and streaming (`stream_load()`) modes.
+
+    Parameters
+    ----------
+    arrow_dir : str or Path
+        Directory containing local Arrow or Parquet shards (e.g., "data_cache/cc100").
+    language : str, default="en"
+        Optional language filter. If present in filenames (e.g. "cc100_en_*.parquet"),
+        only matching files will be loaded. Use "" to load all languages.
+    max_phrases : int, optional
+        Maximum number of phrases to load (samples if larger).
+    chunk_size : int, default=100_000
+        Used for logging and partial loads when processing large directories.
+    seed : int, default=42
+        Random seed for reproducible sampling.
+    max_files : int, default=5
+        Maximum number of Arrow/Parquet shards to load. Helps avoid
+        out-of-memory errors when large directories are present.
+    batch_size : int, default=20_000
+        Maximum number of rows per batch when streaming (stream_load mode).
     """
 
     def __init__(
         self,
-        arrow_dir: str,
-        cache_dir: str = "data_cache",
-        sample_size: int | None = None,
-        max_phrases: int = 1_000_000,
-        min_words: int = 3,
-        max_words: int = 12,
+        arrow_dir: str | Path,
+        language: str = "en",
+        max_phrases: Optional[int] = None,
         chunk_size: int = 100_000,
-        merge_on_complete: bool = True,
+        seed: int = 42,
+        max_files: Optional[int] = 5,
+        batch_size: int = 20_000,
     ):
         self.arrow_dir = Path(arrow_dir)
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.sample_size = sample_size
+        self.language = language
         self.max_phrases = max_phrases
-        self.min_words = min_words
-        self.max_words = max_words
         self.chunk_size = chunk_size
-        self.merge_on_complete = merge_on_complete
+        self.seed = seed
+        self.max_files = max_files
+        self.batch_size = batch_size
 
-        self.parts_dir = self.cache_dir / "cc100_phrases_en_parts"
-        self.parts_dir.mkdir(exist_ok=True)
-        self.final_path = self.cache_dir / "cc100_phrases_en.parquet"
+    # ----------------------------------------------------------
+    def _read_table(self, path: Path) -> pa.Table:
+        """Read a single Arrow or Parquet file robustly."""
+        suffix = path.suffix.lower()
+        if suffix == ".parquet":
+            return pq.read_table(path)
+        elif suffix == ".arrow":
+            try:
+                with pa.ipc.open_file(path) as reader:
+                    return reader.read_all()
+            except pa.lib.ArrowInvalid:
+                # Fall back to stream format (used by Hugging Face datasets)
+                with pa.ipc.open_stream(path) as reader:
+                    return reader.read_all()
+        else:
+            raise ValueError(f"Unsupported file type: {path}")
 
-    def _download_if_needed(self):
-        """Iterate through Arrow shards and build filtered phrase parts."""
-        arrow_files = sorted(self.arrow_dir.glob("*.arrow"))
-        if not arrow_files:
-            raise FileNotFoundError(f"No .arrow files found in {self.arrow_dir}")
+    # ----------------------------------------------------------
+    def _collect_files(self) -> list[Path]:
+        """Return filtered and capped list of shards."""
+        files = sorted(
+            f
+            for f in self.arrow_dir.glob("*.parquet")
+            if (not self.language or self.language.lower() in f.name.lower())
+        )
+        files += sorted(
+            f
+            for f in self.arrow_dir.glob("*.arrow")
+            if (not self.language or self.language.lower() in f.name.lower())
+        )
 
-        start_count = len(list(self.parts_dir.glob("chunk_*.parquet")))
-        logger.info(f"Resuming from {start_count} existing chunks in {self.parts_dir}")
+        if not files:
+            raise FileNotFoundError(
+                f"No parquet/arrow files found in {self.arrow_dir}"
+                + f"for language='{self.language}'"
+            )
 
-        total_written = start_count * self.chunk_size
-        pbar = tqdm(total=self.max_phrases, desc="Filtering CC100 shards", ncols=100)
-        pbar.update(total_written)
+        if self.max_files is not None and len(files) > self.max_files:
+            logger.warning(
+                f"⚠️  Found {len(files)} shards; limiting to first {self.max_files} "
+                "to avoid memory overflow."
+            )
+            files = files[: self.max_files]
+        return files
 
-        phrases = []
+    # ----------------------------------------------------------
+    def _table_to_df(self, table: pa.Table) -> pd.DataFrame:
+        """Convert Arrow table to standardized DataFrame with 'phrase' column."""
+        df = table.to_pandas()
+        if "text" in df.columns:
+            df = df.rename(columns={"text": "phrase"})
+        df = df.dropna(subset=["phrase"])
+        return df
 
-        for arrow_path in arrow_files:
-            if total_written >= self.max_phrases:
-                break
-            logger.info(f"Processing shard: {arrow_path.name}")
-            ds = Dataset.from_file(str(arrow_path))
+    # ----------------------------------------------------------
+    def load(self) -> pd.DataFrame:
+        """Load and merge all shards into one DataFrame (in-memory)."""
+        files = self._collect_files()
+        logger.info(f"Resuming from {len(files)} existing chunks in {self.arrow_dir}")
 
-            for record in ds:
-                text = record["text"].strip().replace("\n", " ")
-                for sent in text.split(". "):
-                    words = sent.split()
-                    if self.min_words <= len(words) <= self.max_words:
-                        phrases.append(sent)
-                        pbar.update(1)
-                        if len(phrases) >= self.chunk_size:
-                            total_written += self._write_chunk(phrases)
-                            phrases.clear()
-                        if total_written >= self.max_phrases:
-                            break
-                if total_written >= self.max_phrases:
-                    break
+        parts = []
+        for path in files:
+            table = self._read_table(path)
+            df = self._table_to_df(table)
+            parts.append(df)
 
-        if phrases:
-            total_written += self._write_chunk(phrases)
-            phrases.clear()
+            if len(df) > 0 and len(df) % self.chunk_size == 0:
+                logger.info(f"Loaded {len(df):,} phrases from {path.name}")
 
-        pbar.close()
-        logger.info(f"Filtered and saved {total_written:,} phrases.")
+        merged = pd.concat(parts, ignore_index=True)
+        logger.info(f"Merged {len(merged):,} phrases from {len(parts)} parts.")
 
-        if self.merge_on_complete:
-            self._merge_parts()
+        if self.max_phrases is not None and len(merged) > self.max_phrases:
+            merged = merged.sample(n=self.max_phrases, random_state=self.seed)
+            logger.info(
+                f"Sampled down to {len(merged):,} phrases "
+                + f"(max_phrases={self.max_phrases})"
+            )
 
-    def _write_chunk(self, phrases):
-        """Write one chunk of phrases to a new part file."""
-        df = pd.DataFrame({"phrase": phrases})
-        chunk_id = len(list(self.parts_dir.glob("chunk_*.parquet")))
-        out_path = self.parts_dir / f"chunk_{chunk_id:04d}.parquet"
-        df.to_parquet(out_path, engine="pyarrow", compression="snappy", index=False)
-        logger.info(f"Wrote chunk {chunk_id:04d} with {len(df):,} phrases → {out_path.name}")
-        return len(df)
+        merged = merged.reset_index(drop=True)
+        logger.info(f"Loaded {len(merged):,} CC100 offline phrases.")
+        return merged
 
-    def _merge_parts(self):
-        """Combine all part files into a single Parquet dataset."""
-        logger.info(f"Merging parts from {self.parts_dir} ...")
-        part_files = sorted(self.parts_dir.glob("chunk_*.parquet"))
-        dfs = [pd.read_parquet(f) for f in part_files]
-        df_all = pd.concat(dfs, ignore_index=True)
-        df_all.to_parquet(self.final_path, compression="snappy", index=False)
-        logger.info(f"Merged {len(df_all):,} phrases into {self.final_path}")
+    # ----------------------------------------------------------
+    def stream_load(self) -> Generator[pd.DataFrame, None, None]:
+        """
+        Stream shards in mini-batches to avoid large memory usage.
+        Yields smaller DataFrames sequentially.
+        """
+        files = self._collect_files()
+        logger.info(f"Streaming {len(files)} chunks from {self.arrow_dir}")
 
-    def load(self):
-        self._download_if_needed()
-        df = pd.read_parquet(self.final_path)
-        if self.sample_size and self.sample_size < len(df):
-            df = df.sample(n=self.sample_size, random_state=42)
-        logger.info(f"Loaded {len(df):,} CC100 offline phrases.")
+        for i, path in enumerate(files, 1):
+            table = self._read_table(path)
+            df = self._table_to_df(table)
 
-        if self.max_phrases and len(df) > self.max_phrases:
-            df = df.sample(n=self.max_phrases, random_state=42)
-        return df["phrase"].tolist()
+            # Yield in manageable sub-batches
+            for start in range(0, len(df), self.batch_size):
+                sub_df = df.iloc[start : start + self.batch_size]
+                logger.info(
+                    f"Yielding {len(sub_df):,} rows from {path.name} "
+                    f"({start // self.batch_size + 1}/"
+                    f"{int(np.ceil(len(df) / self.batch_size))})"
+                )
+                yield sub_df

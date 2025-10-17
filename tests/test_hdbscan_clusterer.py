@@ -1,6 +1,7 @@
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
-from unittest.mock import patch, MagicMock
 
 from phrasely.clustering.hdbscan_clusterer import HDBSCANClusterer
 
@@ -15,6 +16,7 @@ def small_data():
 
 # --- Basic CPU path ----------------------------------------------------------
 
+
 def test_cpu_clustering_basic(small_data):
     clusterer = HDBSCANClusterer(use_gpu=False, min_cluster_size=3)
     labels = clusterer.cluster(small_data)
@@ -23,6 +25,7 @@ def test_cpu_clustering_basic(small_data):
 
 
 # --- Validation and edge cases ----------------------------------------------
+
 
 def test_invalid_type():
     clusterer = HDBSCANClusterer()
@@ -44,6 +47,7 @@ def test_too_small_input():
 
 
 # --- GPU behavior ------------------------------------------------------------
+
 
 def test_gpu_requested_but_unavailable(monkeypatch, small_data):
     monkeypatch.setattr("phrasely.clustering.hdbscan_clusterer.GPU_IMPORTED", False)
@@ -78,8 +82,10 @@ def test_gpu_available_and_used(monkeypatch, small_data):
 
 # --- Fallback behavior -------------------------------------------------------
 
+
 def test_backend_failure_returns_all_minus_one(monkeypatch, small_data):
     """If the backend raises, return all -1."""
+
     def raise_error(*args, **kwargs):
         raise RuntimeError("Simulated failure")
 

@@ -1,8 +1,9 @@
-import time
 import logging
+import time
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
 
 @contextmanager
 def catch_time(label: str):

@@ -30,13 +30,13 @@ def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
     # Configure base logging once
     logging.basicConfig(
         level=level,
-        format="%(message)s",       # clean, no color or level prefixes
+        format="%(message)s",  # clean, no color or level prefixes
         handlers=[logging.StreamHandler(sys.stdout)],
         force=True,
     )
 
     # Return a module-specific logger
     logger = logging.getLogger(name)
-    logger.propagate = False       # prevent double emission through root
+    logger.propagate = False  # prevent double emission through root
     logger.setLevel(level)
     return logger

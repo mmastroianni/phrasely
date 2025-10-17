@@ -1,107 +1,64 @@
 import logging
-from pathlib import Path
+from typing import Optional
+
 import pandas as pd
-from datasets import load_dataset, disable_caching
-from tqdm import tqdm
-from phrasely.data_loading.base_loader import BaseLoader
+from datasets import load_dataset
 
 logger = logging.getLogger(__name__)
 
 
-class CC100Loader(BaseLoader):
+class CC100Loader:
     """
-    Streams short English sentences from the CC100 dataset, writing in chunks.
+    Loads a manageable subset of the CC100 dataset from Hugging Face.
 
-    - Uses Hugging Face Datasets to stream the 'cc100' English subset.
-    - Filters for short phrases (3–12 words).
-    - Writes every `chunk_size` phrases incrementally to Parquet.
-    - Resumes from previous progress if file already exists.
-    - Displays live progress with tqdm.
+    Parameters
+    ----------
+    language : str, default="en"
+        Language code, e.g. 'en', 'fr', 'de'. Defaults to English.
+    max_phrases : int, optional
+        Maximum number of phrases to load (samples if dataset is larger).
+    cache_dir : str, optional
+        Directory for Hugging Face cache. If None, uses default ~/.cache/huggingface.
+    seed : int, default=42
+        Random seed for reproducible sampling.
     """
 
     def __init__(
         self,
-        cache_dir: str = "data_cache",
-        sample_size: int | None = None,
-        max_phrases: int = 1_000_000,
-        min_words: int = 3,
-        max_words: int = 12,
-        chunk_size: int = 100_000,
+        language: str = "en",
+        max_phrases: Optional[int] = 100_000,
+        cache_dir: Optional[str] = None,
+        seed: int = 42,
     ):
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.sample_size = sample_size
+        self.language = language
         self.max_phrases = max_phrases
-        self.min_words = min_words
-        self.max_words = max_words
-        self.chunk_size = chunk_size
-        self.file_path = self.cache_dir / "cc100_phrases_en.parquet"
+        self.cache_dir = cache_dir
+        self.seed = seed
 
-    def _download_if_needed(self):
-        # Check existing progress
-        start_count = 0
-        if self.file_path.exists():
-            try:
-                existing = pd.read_parquet(self.file_path, columns=["phrase"])
-                start_count = len(existing)
-                logger.info(f"Found existing file with {start_count:,} phrases.")
-                if start_count >= self.max_phrases:
-                    logger.info("Dataset already complete — skipping download.")
-                    return
-            except Exception as e:
-                logger.warning(f"Could not read existing file ({e}); starting fresh.")
-                self.file_path.unlink(missing_ok=True)
+    # ----------------------------------------------------------
 
-        logger.info("Streaming English CC100 dataset from Hugging Face...")
-        disable_caching()
-        ds = load_dataset("cc100", "en", split="train", streaming=True)
+    def load(self) -> pd.DataFrame:
+        logger.info(f"Loading CC100 ({self.language}) subset from Hugging Face...")
 
-        phrases = []
-        total_written = start_count
-        pbar = tqdm(total=self.max_phrases, desc="Collecting phrases", ncols=100)
-        pbar.update(start_count)
+        dataset = load_dataset(
+            "cc100",
+            self.language,
+            split="train",
+            cache_dir=self.cache_dir,
+        )
 
-        for record in ds:
-            text = record["text"].strip().replace("\n", " ")
-            for sent in text.split(". "):
-                words = sent.split()
-                if self.min_words <= len(words) <= self.max_words:
-                    if total_written + len(phrases) < self.max_phrases:
-                        phrases.append(sent)
-                        pbar.update(1)
-                    else:
-                        break
+        # Convert to DataFrame
+        df = pd.DataFrame(dataset)[["text"]].rename(columns={"text": "phrase"})
+        logger.info(f"Loaded {len(df):,} rows for language='{self.language}'")
 
-                    # Write chunk every N phrases
-                    if len(phrases) >= self.chunk_size:
-                        total_written += self._append_chunk(phrases)
-                        phrases.clear()
+        # Optional down-sampling
+        if self.max_phrases is not None and len(df) > self.max_phrases:
+            df = df.sample(n=self.max_phrases, random_state=self.seed)
+            logger.info(f"Sampled {len(df):,} rows (max_phrases={self.max_phrases})")
 
-                    if total_written >= self.max_phrases:
-                        break
-            if total_written >= self.max_phrases:
-                break
+        # Clean up and return
+        df = df.dropna(subset=["phrase"])
+        df = df[df["phrase"].str.len() > 0].reset_index(drop=True)
 
-        # Write any remaining phrases
-        if phrases:
-            total_written += self._append_chunk(phrases)
-            phrases.clear()
-
-        pbar.close()
-        logger.info(f"Collected and saved {total_written:,} short sentences to {self.file_path}")
-
-    def _append_chunk(self, phrases):
-        """Append a chunk of phrases to the Parquet file."""
-        df = pd.DataFrame({"phrase": phrases})
-        mode = "append" if self.file_path.exists() else "overwrite"
-        df.to_parquet(self.file_path, engine="pyarrow", compression="snappy", index=False)
-        logger.info(f"Appended {len(df):,} phrases ({mode})")
-        return len(df)
-
-    def load(self):
-        self._download_if_needed()
-        df = pd.read_parquet(self.file_path)
-        if self.sample_size and self.sample_size < len(df):
-            df = df.sample(n=self.sample_size, random_state=42)
-        logger.info(f"Loaded {len(df):,} CC100 phrases.")
-        return df["phrase"].tolist()
+        logger.info(f"Returning {len(df):,} cleaned phrases.")
+        return df

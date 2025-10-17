@@ -1,8 +1,10 @@
-import torch
-import cupy
 import logging
 
+import cupy
+import torch
+
 logger = logging.getLogger(__name__)
+
 
 def is_gpu_available() -> bool:
     """Return True if either torch or CuPy can see a CUDA device."""
@@ -27,12 +29,12 @@ def get_device_info() -> dict:
         if torch.cuda.is_available():
             idx = torch.cuda.current_device()
             props = torch.cuda.get_device_properties(idx)
-            total_gb = round(props.total_memory / (1024 ** 3), 1)
+            total_gb = round(props.total_memory / (1024**3), 1)
             info = {"name": props.name, "total": total_gb}
         elif cupy.cuda.runtime.getDeviceCount() > 0:
             dev = cupy.cuda.Device()
-            attrs = dev.attributes
-            total_gb = round(dev.mem_info[1] / (1024 ** 3), 1)
+            # attrs = dev.attributes
+            total_gb = round(dev.mem_info[1] / (1024**3), 1)
             info = {"name": f"CuPy device {dev.id}", "total": total_gb}
     except Exception as e:
         logger.warning(f"Could not query GPU info: {e}")

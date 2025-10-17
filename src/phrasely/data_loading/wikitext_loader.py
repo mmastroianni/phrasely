@@ -1,8 +1,10 @@
 import logging
 from pathlib import Path
+
 import pandas as pd
 from datasets import load_dataset
 from tqdm import tqdm
+
 from phrasely.data_loading.base_loader import BaseLoader
 
 logger = logging.getLogger(__name__)
@@ -39,7 +41,9 @@ class WikitextLoader(BaseLoader):
             return
 
         logger.info("Streaming Wikitext-103 dataset from Hugging Face...")
-        ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
+        ds = load_dataset(
+            "wikitext", "wikitext-103-raw-v1", split="train", streaming=True
+        )
 
         phrases = []
         progress = tqdm(total=self.max_phrases, desc="Collecting phrases", ncols=90)

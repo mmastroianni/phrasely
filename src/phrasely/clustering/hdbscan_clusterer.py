@@ -1,12 +1,15 @@
 import logging
+
 import numpy as np
-from phrasely.utils.gpu_utils import is_gpu_available
 from hdbscan import HDBSCAN as CPUHDBSCAN
+
+from phrasely.utils.gpu_utils import is_gpu_available
 
 logger = logging.getLogger(__name__)
 
 try:
     from cuml.cluster import HDBSCAN as GPUHDBSCAN
+
     GPU_IMPORTED = True
 except Exception:
     GPUHDBSCAN = None

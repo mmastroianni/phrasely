@@ -1,8 +1,9 @@
-import logging
-import torch
-import numpy as np
 import hashlib
+import logging
 from pathlib import Path
+
+import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
@@ -86,7 +87,9 @@ class PhraseEmbedder:
         total = len(phrases)
         f_out = open(tmp_path, "ab")
 
-        for start in tqdm(range(0, total, self.chunk_size), desc="Embedding chunks", ncols=90):
+        for start in tqdm(
+            range(0, total, self.chunk_size), desc="Embedding chunks", ncols=90
+        ):
             end = min(start + self.chunk_size, total)
             chunk_phrases = phrases[start:end]
             try:
@@ -100,7 +103,9 @@ class PhraseEmbedder:
                 if "CUDA" in str(e):
                     logger.warning("CUDA OOM → retrying this chunk on CPU")
                     cpu_model = SentenceTransformer(self.model_name, device="cpu")
-                    emb = cpu_model.encode(chunk_phrases, batch_size=32, show_progress_bar=False)
+                    emb = cpu_model.encode(
+                        chunk_phrases, batch_size=32, show_progress_bar=False
+                    )
                 else:
                     raise
             np.save(f_out, np.asarray(emb, dtype=np.float32))
