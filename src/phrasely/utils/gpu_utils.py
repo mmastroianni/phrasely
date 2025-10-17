@@ -1,24 +1,23 @@
 import logging
-
-import cupy
 import torch
 
 logger = logging.getLogger(__name__)
 
+try:
+    import cupy
+except ImportError:
+    cupy = None
+    logger.warning("CuPy not available – GPU utilities limited to CPU fallback.")
 
 def is_gpu_available() -> bool:
-    """Return True if either torch or CuPy can see a CUDA device."""
-    try:
-        if torch.cuda.is_available():
-            return True
-    except Exception:
-        pass
+    if cupy is None:
+        return False
     try:
         _ = cupy.cuda.runtime.getDeviceCount()
         return True
     except Exception:
-        pass
-    return False
+        return False
+
 
 
 def get_device_info() -> dict:
