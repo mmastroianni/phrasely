@@ -20,23 +20,17 @@ class ColorFormatter(logging.Formatter):
         return f"{color}{message}{self.RESET}"
 
 
-def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
-    """Set up a clean, single-stream logger (no color, no duplication)."""
-    # Remove any pre-existing handlers (e.g., Jupyter root handler)
-    root = logging.getLogger()
-    for h in root.handlers[:]:
-        root.removeHandler(h)
-
-    # Configure base logging once
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",  # clean, no color or level prefixes
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=True,
-    )
-
-    # Return a module-specific logger
+def setup_logger(name: str, level=logging.INFO):
     logger = logging.getLogger(name)
-    logger.propagate = False  # prevent double emission through root
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            "[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
+            "%H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
     logger.setLevel(level)
+    logger.propagate = True  # ✅ ensure messages bubble up to caplog
     return logger

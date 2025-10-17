@@ -1,17 +1,16 @@
-import logging
-import time
-from contextlib import contextmanager
-
+import logging, time
 logger = logging.getLogger(__name__)
 
+from contextlib import contextmanager
 
 @contextmanager
-def catch_time(label: str):
-    """Context manager that logs both start and completion of timed code blocks."""
-    logger.info(f"▶️  {label}...")
+def catch_time(task_name: str = "operation"):
     start = time.time()
     try:
         yield
-    finally:
-        elapsed = time.time() - start
-        logger.info(f"{label} completed in {elapsed:.3f}s.")
+        duration = time.time() - start
+        logger.info(f"{task_name} completed in {duration:.2f}s")
+    except Exception as e:
+        duration = time.time() - start
+        logger.error(f"{task_name} failed after {duration:.2f}s: {e}")  # ✅ explicit message
+        raise

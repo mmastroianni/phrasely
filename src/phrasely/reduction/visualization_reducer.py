@@ -1,15 +1,5 @@
 import logging
-
 import numpy as np
-
-try:
-    import cuml.manifold.umap as cuml_umap
-
-    HAS_GPU_UMAP = True
-except Exception:
-    HAS_GPU_UMAP = False
-
-import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
@@ -17,26 +7,9 @@ logger = logging.getLogger(__name__)
 
 
 class VisualizationReducer:
-    """
-    Performs low-dimensional reduction for visualization (2D).
+    """Performs 2D or 3D visualization-oriented dimensionality reduction.
 
-    Supports:
-    - UMAP (GPU or CPU)
-    - t-SNE
-    - PCA fallback
-
-    Parameters
-    ----------
-    method : {"umap", "tsne", "pca"}
-        Reduction method to use.
-    n_components : int, default=2
-        Target dimension for visualization.
-    use_gpu : bool, default=False
-        Whether to prefer GPU backends (for UMAP if available).
-    random_state : int, default=42
-        Random seed for reproducibility.
-    **kwargs : dict
-        Additional parameters passed to the underlying reducer.
+    Supports UMAP, t-SNE, and fallback to PCA.
     """
 
     def __init__(
@@ -47,81 +20,75 @@ class VisualizationReducer:
         random_state: int = 42,
         **kwargs,
     ):
-        self.method = method.lower()
+        """
+        Parameters
+        ----------
+        method : str
+            Reduction method ('umap', 'tsne', or 'pca' fallback).
+        n_components : int
+            Number of components to reduce to (usually 2 or 3).
+        use_gpu : bool
+            Whether to prefer GPU-based reducers (if available).
+        random_state : int
+            Random seed for reproducibility.
+        **kwargs :
+            Additional keyword arguments passed to t-SNE (e.g. n_iter, perplexity).
+        """
+        self.method = method
         self.n_components = n_components
         self.use_gpu = use_gpu
         self.random_state = random_state
-        self.kwargs = kwargs
+        self.kwargs = kwargs  # extra params for TSNE etc.
 
         logger.info(
-            f"VisualizationReducer: method={self.method}, "
-            f"GPU={self.use_gpu}, seed={self.random_state}"
+            f"VisualizationReducer: method={method}, GPU={use_gpu}, seed={random_state}"
         )
 
     # ------------------------------------------------------------------
-
     def _init_umap(self):
-        """Initialize UMAP reducer (GPU or CPU)."""
-        clean_kwargs = {k: v for k, v in self.kwargs.items() if k != "n_components"}
-
-        if self.use_gpu and HAS_GPU_UMAP:
+        """Return a configured UMAP reducer instance."""
+        if self.use_gpu:
             try:
-                reducer = cuml_umap.UMAP(
-                    n_components=self.n_components,
-                    random_state=self.random_state,
-                    **clean_kwargs,
-                )
-                logger.warning(
-                    "⚠️  GPU UMAP may be nondeterministic even with a fixed "
-                    + "random_state."
-                )
-                return reducer
-            except Exception as e:
-                logger.warning(f"GPU UMAP unavailable ({e}); using CPU fallback.")
+                from cuml.manifold import UMAP
+            except ImportError:
+                from umap import UMAP
+        else:
+            from umap import UMAP
 
-        return umap.UMAP(
+        return UMAP(
             n_components=self.n_components,
             random_state=self.random_state,
-            **clean_kwargs,
+            metric="cosine",
         )
 
     # ------------------------------------------------------------------
+    def _run_umap(self, X: np.ndarray) -> np.ndarray:
+        """Run UMAP; kept separate for easier test monkeypatching."""
+        reducer = self._init_umap()
+        return reducer.fit_transform(X)
 
+    # ------------------------------------------------------------------
     def reduce(self, X: np.ndarray) -> np.ndarray:
-        """Run dimensionality reduction and return a 2D embedding."""
+        """Perform visualization reduction with fallback to PCA."""
         try:
             if self.method == "umap":
-                reducer = self._init_umap()
-                Y = reducer.fit_transform(X)
+                return self._run_umap(X)
+
             elif self.method == "tsne":
-                reducer = TSNE(
+                tsne = TSNE(
                     n_components=self.n_components,
                     random_state=self.random_state,
-                    **self.kwargs,
+                    **self.kwargs,  # allow n_iter, perplexity, etc.
                 )
-                Y = reducer.fit_transform(X)
-            elif self.method == "pca":
-                reducer = PCA(
-                    n_components=self.n_components, random_state=self.random_state
-                )
-                Y = reducer.fit_transform(X)
+                return tsne.fit_transform(X)
+
             else:
                 raise ValueError(f"Unknown visualization method: {self.method}")
 
         except Exception as e:
-            logger.warning(
-                f"Visualization reducer '{self.method}' failed ({e}); "
-                + "falling back to PCA."
+            logger.warning(f"VisualizationReducer fallback to PCA due to {e}")
+            pca = PCA(
+                n_components=self.n_components,
+                random_state=self.random_state,
             )
-            reducer = PCA(
-                n_components=self.n_components, random_state=self.random_state
-            )
-            Y = reducer.fit_transform(X)
-
-        # Normalize for consistent plotting
-        Y = (Y - Y.mean(axis=0)) / (Y.std(axis=0) + 1e-9)
-        logger.info(
-            f"VisualizationReducer: reduced {X.shape[1]} → {self.n_components} dims, "
-            f"mean={Y.mean(axis=0)}, std={Y.std(axis=0)}"
-        )
-        return Y
+            return pca.fit_transform(X)

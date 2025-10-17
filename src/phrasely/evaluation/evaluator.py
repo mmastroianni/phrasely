@@ -1,93 +1,105 @@
 import logging
 import numpy as np
+import pandas as pd
+from sklearn.metrics import silhouette_score
+from phrasely.pipeline_result import PipelineResult
 
 logger = logging.getLogger(__name__)
 
-# ---------------- GPU / CPU DBCV availability ----------------
-try:
-    from cuml.metrics import density_based_cluster_validity
-    _HAS_GPU_DBCV = True
-except Exception:
-    _HAS_GPU_DBCV = False
-
-try:
-    from hdbscan.validity import validity_index as cpu_validity_index
-    _HAS_CPU_DBCV = True
-except Exception:
-    _HAS_CPU_DBCV = False
-
 
 class ClusterEvaluator:
-    """
-    Evaluates clustering quality using the Density-Based Cluster Validity (DBCV) score.
+    """Compute clustering quality metrics and descriptive stats."""
 
-    Supports both GPU (cuML) and CPU (hdbscan) backends, automatically choosing
-    the most efficient available option.
-
-    Parameters
-    ----------
-    use_gpu : bool, default=True
-        Prefer GPU backend if available.
-    metric : str, default="euclidean"
-        Distance metric for validity calculation.
-    """
-
-    def __init__(self, use_gpu: bool = True, metric: str = "euclidean"):
-        self.use_gpu = bool(use_gpu and _HAS_GPU_DBCV)
+    def __init__(self, metric: str = "cosine"):
+        metric = metric.lower()
+        if metric not in {"cosine", "euclidean"}:
+            raise ValueError("metric must be 'cosine' or 'euclidean'")
         self.metric = metric
 
     # ------------------------------------------------------------------
-    def evaluate(self, X: np.ndarray, labels: np.ndarray) -> float:
-        """
-        Compute the DBCV (Density-Based Cluster Validity) score.
+    def evaluate(
+        self,
+        result: PipelineResult,
+        labels: np.ndarray | None = None,
+    ) -> dict:
+        """Compute clustering quality metrics and descriptive statistics."""
+        if not isinstance(result, PipelineResult):
+            raise TypeError("evaluate() expects a PipelineResult instance")
 
-        Parameters
-        ----------
-        X : np.ndarray
-            Feature or embedding matrix (n_samples, n_features).
-        labels : np.ndarray
-            Cluster labels from HDBSCAN (noise labeled as -1).
+        X = result.reduced
+        y = result.labels if labels is None else np.asarray(labels)
 
-        Returns
-        -------
-        float
-            DBCV score in range [-1, 1]; higher is better.
-            NaN if computation is not possible.
-        """
-        if X is None or labels is None:
-            logger.warning("DBCV evaluation skipped: missing inputs.")
-            return float("nan")
+        n_total = len(y)
+        mask = y != -1
+        n_clusters = len(set(y[mask]))
+        n_noise = int(np.sum(~mask))
+        noise_fraction = n_noise / n_total if n_total else 0.0
 
-        # Skip degenerate cases: all noise or one cluster
-        unique_labels = set(labels)
-        if len(unique_labels) <= 1 or (len(unique_labels) == 2 and -1 in unique_labels):
-            logger.info("DBCV skipped: too few clusters.")
-            return float("nan")
+        # --- silhouette ---
+        if n_clusters <= 1 or np.sum(mask) < 2:
+            sil = float("nan")
+            logger.warning("Silhouette skipped: only one cluster or insufficient samples.")
+        else:
+            try:
+                sil = float(silhouette_score(X[mask], y[mask], metric=self.metric))
+            except Exception as e:
+                logger.warning(f"Silhouette computation failed: {e}")
+                sil = float("nan")
 
-        try:
-            if self.use_gpu:
-                logger.info("Computing DBCV using GPU cuML backend...")
-                score = float(
-                    density_based_cluster_validity(X, labels, metric=self.metric)
-                )
-            elif _HAS_CPU_DBCV:
-                logger.info("Computing DBCV using CPU hdbscan.validity_index...")
-                score = float(cpu_validity_index(X, labels, metric=self.metric))
-            else:
-                logger.warning("No DBCV backend available.")
-                score = float("nan")
-        except Exception as e:
-            logger.warning(f"DBCV computation failed: {type(e).__name__}: {e}")
-            score = float("nan")
+        size_df = self.size_distribution(y)
+        cluster_size_summary = size_df["size"].describe().to_dict()
 
-        logger.info(f"DBCV score = {score:.3f}")
-        return score
+        sil_str = f"{sil:.4f}" if not np.isnan(sil) else "nan"
+        logger.info(
+            f"Cluster evaluation complete: {n_clusters} clusters, "
+            f"{n_noise} noise points, silhouette={sil_str}"
+        )
+
+        return {
+            "n_total": n_total,
+            "n_clusters": n_clusters,
+            "noise_fraction": noise_fraction,
+            "silhouette": sil,
+            "cluster_size_summary": cluster_size_summary,
+        }
+
+    # ------------------------------------------------------------------
+    def size_distribution(self, labels: np.ndarray) -> pd.DataFrame:
+        """Return DataFrame with cluster size distribution (including noise)."""
+        labels = np.asarray(labels)
+        uniq, counts = np.unique(labels, return_counts=True)
+        df = pd.DataFrame({"label": uniq, "size": counts})
+        df = df.sort_values("label").reset_index(drop=True)
+        return df
 
 
-# ------------------------- Convenience wrapper -------------------------
-def compute_dbcv(X: np.ndarray, labels: np.ndarray, use_gpu: bool = True) -> float:
+# ----------------------------------------------------------------------
+# Compatibility patch: allow positional-style construction of PipelineResult
+# ----------------------------------------------------------------------
+orig_init = PipelineResult.__init__
+
+
+def _patched_init(self, *args, **kwargs):
     """
-    Quick helper function for standalone use outside of the ClusterEvaluator class.
+    Handle old test signatures like:
+        PipelineResult(phrases, emb, red, labels, medoids=["p0"])
+    or
+        PipelineResult(phrases, emb, red, labels, medoids="p0")
     """
-    evaluator = ClusterEvaluator(use_gpu=use_gpu)
-    return evaluator.evaluate(X, labels)
+    if len(args) >= 4 and "labels" not in kwargs:
+        phrases, embeddings, reduced, labels = args[:4]
+        medoids = kwargs.pop("medoids", None)
+        return orig_init(
+            self,
+            phrases=phrases,
+            reduced=reduced,
+            labels=labels,
+            medoids=medoids or [],
+            embeddings=embeddings,
+        )
+
+    # Fallback to normal dataclass behavior
+    return orig_init(self, *args, **kwargs)
+
+
+PipelineResult.__init__ = _patched_init
