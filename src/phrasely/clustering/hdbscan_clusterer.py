@@ -1,6 +1,8 @@
 import logging
+
 import numpy as np
 from hdbscan import HDBSCAN as CPUHDBSCAN
+
 from phrasely.utils import gpu_utils
 
 # Expose for test monkeypatching
@@ -12,6 +14,7 @@ logger = logging.getLogger(__name__)
 try:
     import cupy as cp
     from cuml.cluster import HDBSCAN as GPUHDBSCAN
+
     GPU_IMPORTED = True
 except Exception as e:
     GPUHDBSCAN = None
