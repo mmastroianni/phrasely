@@ -2,10 +2,9 @@ import logging
 
 import numpy as np
 from hdbscan import HDBSCAN as CPUHDBSCAN
-import phrasely.utils.gpu_utils
 from phrasely.utils import gpu_utils
 
-is_gpu_available = gpu_utils.is_gpu_available()
+is_gpu_available = gpu_utils.is_gpu_available
 
 logger = logging.getLogger(__name__)
 
