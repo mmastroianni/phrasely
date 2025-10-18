@@ -11,8 +11,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-
-
 def compute_dbcv(embeddings, labels, max_samples=5000):
     """
     Compute an approximate Density-Based Cluster Validation (DBCV) score.

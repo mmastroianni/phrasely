@@ -1,5 +1,4 @@
 import logging
-from time import perf_counter
 
 import numpy as np
 
@@ -76,8 +75,6 @@ class TwoStageReducer:
             )
             X = X.astype(np.float32)
 
-        t0 = perf_counter()
-
         # ============================
         # Stage 1: SVD
         # ============================
@@ -151,5 +148,6 @@ class TwoStageReducer:
             X_umap = umap.fit_transform(X_svd)
             logger.info(
                 f"Stage 2 (CPU UMAP): reduced {self.svd_components} "
-                f"→ {self.umap_components} dims")
+                f"→ {self.umap_components} dims"
+            )
         return X_umap

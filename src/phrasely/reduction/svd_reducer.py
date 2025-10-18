@@ -1,4 +1,5 @@
 import logging
+
 import numpy as np
 from sklearn.decomposition import TruncatedSVD as CPUSVD
 
@@ -47,14 +48,16 @@ class SVDReducer:
         n_samples, n_features = X.shape
         if n_samples < 2:
             logger.warning(
-                f"SVDReducer: input too small for reduction (samples={n_samples}, features={n_features})."
+                f"SVDReducer: input too small for reduction (samples={n_samples},"
+                f" features={n_features})."
             )
             return X
 
         n_components = min(self.n_components, n_features - 1)
         if n_components < self.n_components:
             logger.info(
-                f"SVDReducer: reducing n_components from {self.n_components} → {n_components}."
+                f"SVDReducer: reducing n_components from {self.n_components}"
+                f" → {n_components}."
             )
 
         backend = "GPU" if self.use_gpu else "CPU"
@@ -71,7 +74,9 @@ class SVDReducer:
                 svd = CPUSVD(n_components=n_components)
                 reduced = svd.fit_transform(X)
 
-            logger.info(f"SVDReducer: reduced {n_features} → {n_components} dimensions.")
+            logger.info(
+                f"SVDReducer: reduced {n_features} → {n_components} dimensions."
+            )
             return reduced
 
         except Exception as e:

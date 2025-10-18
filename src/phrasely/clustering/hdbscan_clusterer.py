@@ -1,8 +1,7 @@
 import logging
+
 import numpy as np
 from hdbscan import HDBSCAN as CPUHDBSCAN
-
-from phrasely.utils.gpu_utils import is_gpu_available
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +46,7 @@ class HDBSCANClusterer:
             # Even if is_gpu_available() says False, cuML may still work
             try:
                 import cupy
+
                 n_devices = cupy.cuda.runtime.getDeviceCount()
                 gpu_ok = n_devices > 0
             except Exception as e:
@@ -65,14 +65,13 @@ class HDBSCANClusterer:
         if not isinstance(X, np.ndarray):
             raise TypeError(f"HDBSCANClusterer expected numpy.ndarray, got {type(X)}")
         if X.ndim != 2:
-            raise ValueError(
-                f"HDBSCANClusterer expected 2D array, got shape={X.shape}"
-            )
+            raise ValueError(f"HDBSCANClusterer expected 2D array, got shape={X.shape}")
 
         n_samples = X.shape[0]
         if n_samples < 2:
             logger.warning(
-                f"HDBSCANClusterer: input too small for clustering (samples={n_samples})."
+                "HDBSCANClusterer: input too small for clustering "
+                f"(samples={n_samples})."
             )
             return np.full(n_samples, -1, dtype=int)
 

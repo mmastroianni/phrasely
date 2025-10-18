@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
+
 import numpy as np
-from sentence_transformers import SentenceTransformer
 import torch
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,11 @@ class PhraseEmbedder:
         self.device = device
 
         logger.info(
-            f"PhraseEmbedder using model={model_name}, device={device}, batch_size={batch_size}"
+            f"PhraseEmbedder using model={model_name}, device={device}, "
+            f"batch_size={batch_size}"
         )
 
+        # Load model
         self.model = SentenceTransformer(model_name, device=device)
 
         # Convert to fp16 if on GPU to save VRAM
@@ -70,11 +73,15 @@ class PhraseEmbedder:
 
         # Try loading cached embeddings
         if cache_file.exists():
-            logger.info(f"🔁 Loading cached embeddings for '{dataset_name}' from {cache_file}")
+            logger.info(
+                f"🔁 Loading cached embeddings for '{dataset_name}' from {cache_file}"
+            )
             return np.load(cache_file)
 
         # Compute new embeddings
-        logger.info(f"⚙️ Computing embeddings for '{dataset_name}' using {self.model_name}")
+        logger.info(
+            f"⚙️ Computing embeddings for '{dataset_name}' using {self.model_name}"
+        )
         embeddings = self.model.encode(
             phrases,
             batch_size=self.batch_size,
@@ -82,6 +89,18 @@ class PhraseEmbedder:
             show_progress_bar=True,
             device=self.device,
         )
+
+        # --- Normalize type for mypy and downstream code ---
+        if isinstance(embeddings, list):
+            # Handle list of tensors or arrays
+            if len(embeddings) > 0 and isinstance(embeddings[0], torch.Tensor):
+                embeddings = torch.stack(embeddings)
+            embeddings = np.array(embeddings)
+
+        if isinstance(embeddings, torch.Tensor):
+            embeddings = embeddings.detach().cpu().numpy()
+
+        embeddings = np.asarray(embeddings, dtype=np.float32)
 
         # Save cache
         np.save(cache_file, embeddings)

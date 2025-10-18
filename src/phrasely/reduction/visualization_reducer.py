@@ -1,4 +1,5 @@
 import logging
+
 import numpy as np
 
 from phrasely.utils.gpu_utils import is_gpu_available
@@ -19,7 +20,7 @@ except Exception as e:
 
 # --- CPU fallback ---
 try:
-    import umap
+    import umap  # noqa: F401
     from umap import UMAP as CPUUMAP
 except Exception as e:
     CPUUMAP = None
