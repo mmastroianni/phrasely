@@ -16,7 +16,7 @@ venv/
 
 # Data / cache
 data_cache/
-data/*.parquet
+data/*
 *.ds_store
 .DS_Store
 
