@@ -94,9 +94,13 @@ class HDBSCANClusterer:
 
         try:
             if self.use_gpu and GPUHDBSCAN is not None:
-                # --- GPU path ---
+                # --- GPU path (real or mocked) ---
                 logger.info("Running cuML HDBSCAN on GPU...")
-                X_gpu = cp.asarray(X)
+
+                # Use np as a stand-in if CuPy missing (for CI test mocks)
+                xp = cp if cp is not None else np
+                X_gpu = xp.asarray(X)
+
                 clusterer = GPUHDBSCAN(
                     min_cluster_size=self.min_cluster_size,
                     min_samples=(
@@ -107,7 +111,11 @@ class HDBSCANClusterer:
                     **self.kwargs,
                 )
                 labels_gpu = clusterer.fit_predict(X_gpu)
-                labels = cp.asnumpy(labels_gpu)
+                labels = (
+                    cp.asnumpy(labels_gpu)
+                    if cp is not None and hasattr(cp, "asnumpy")
+                    else np.array(labels_gpu)
+                )
             else:
                 # --- CPU path ---
                 clusterer = CPUHDBSCAN(
