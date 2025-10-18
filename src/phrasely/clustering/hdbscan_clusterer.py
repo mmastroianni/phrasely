@@ -57,7 +57,7 @@ class HDBSCANClusterer:
 
         # --- Robust GPU detection ---
         try:
-            gpu_ok = bool(GPU_IMPORTED and gpu_utils.is_gpu_available())
+            gpu_ok = bool(GPU_IMPORTED and is_gpu_available())
         except Exception as e:
             logger.warning(f"GPU availability check failed: {e}")
             gpu_ok = False
