@@ -19,6 +19,7 @@ data_cache/
 data/*
 *.ds_store
 .DS_Store
+notebooks/data/*
 
 # Tests
 .pytest_cache/
