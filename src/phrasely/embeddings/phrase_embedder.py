@@ -1,142 +1,89 @@
-import hashlib
 import logging
 from pathlib import Path
-from typing import List
-
 import numpy as np
-import torch
 from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
+import torch
 
 logger = logging.getLogger(__name__)
 
 
 class PhraseEmbedder:
     """
-    GPU/CPU-aware phrase embedder with:
-      • automatic model/batch selection,
-      • on-disk caching,
-      • chunked streaming for large datasets.
+    Generates and caches embeddings for input phrases using a SentenceTransformer model.
+
+    Features:
+        • GPU or CPU inference depending on availability.
+        • Automatic fp16 conversion for lower VRAM usage.
+        • Transparent caching via dataset_name.
+        • Batch processing with progress bar.
+
+    Example:
+        embedder = PhraseEmbedder()
+        embeddings = embedder.embed(phrases, dataset_name="msmarco")
     """
 
     def __init__(
         self,
-        model_name: str | None = None,
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        batch_size: int = 8,
         device: str | None = None,
-        batch_size: int | None = None,
-        cache_dir: str = "data_cache",
-        chunk_size: int = 10_000,
     ):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.chunk_size = chunk_size
+        # Auto-detect GPU if not specified
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # --- Detect VRAM ---
-        self.vram_gb: float = 0.0
-        if self.device == "cuda":
-            try:
-                props = torch.cuda.get_device_properties(0)
-                self.vram_gb = props.total_memory / 1024**3
-            except Exception:
-                pass
-
-        # --- Model selection ---
-        if model_name:
-            self.model_name = model_name
-        elif self.vram_gb >= 6:
-            self.model_name = "all-mpnet-base-v2"
-        else:
-            self.model_name = "paraphrase-MiniLM-L6-v2"
-
-        # --- Batch size heuristic ---
-        self.batch_size: int
-        if batch_size:
-            self.batch_size = batch_size
-        elif self.vram_gb >= 10:
-            self.batch_size = 64
-        elif self.vram_gb >= 6:
-            self.batch_size = 32
-        else:
-            self.batch_size = 8
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.device = device
 
         logger.info(
-            f"PhraseEmbedder using model={self.model_name}, device={self.device}, "
-            f"VRAM≈{self.vram_gb:.1f} GB, batch_size={self.batch_size}"
+            f"PhraseEmbedder using model={model_name}, device={device}, batch_size={batch_size}"
         )
 
-        # --- Load model ---
-        self.model = SentenceTransformer(self.model_name, device=self.device)
-        if self.device == "cuda" and self.vram_gb < 6:
+        self.model = SentenceTransformer(model_name, device=device)
+
+        # Convert to fp16 if on GPU to save VRAM
+        if device == "cuda":
             try:
                 self.model = self.model.half()
                 logger.info("Converted model to fp16 for reduced VRAM usage.")
-            except Exception:
-                logger.warning("Could not convert model to fp16; continuing in fp32.")
+            except Exception as e:
+                logger.warning(f"Could not convert model to fp16: {e}")
 
-    # ---------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    def embed(self, phrases: list[str], dataset_name: str = "default") -> np.ndarray:
+        """
+        Generate or load cached embeddings for a given dataset.
 
-    def embed(self, phrases: List[str]) -> np.ndarray:
-        """Return embeddings with chunked caching to disk."""
-        cache_path = self._cache_path(phrases)
-        tmp_path = cache_path.with_suffix(".partial.npy")
+        Args:
+            phrases: list of input phrases.
+            dataset_name: unique identifier for the dataset (used for caching).
 
-        if cache_path.exists():
-            logger.info(f"Loading cached embeddings from {cache_path}")
-            return np.load(cache_path, allow_pickle=False)
+        Returns:
+            np.ndarray of shape (n_phrases, embedding_dim)
+        """
+        cache_dir = Path("data_cache")
+        cache_dir.mkdir(exist_ok=True)
 
-        logger.info("Computing embeddings in streaming mode...")
-        total = len(phrases)
-        f_out = open(tmp_path, "ab")
+        safe_model = self.model_name.replace("/", "-")
+        cache_file = cache_dir / f"embeddings_{dataset_name}_{safe_model}.npy"
 
-        for start in tqdm(
-            range(0, total, self.chunk_size), desc="Embedding chunks", ncols=90
-        ):
-            end = min(start + self.chunk_size, total)
-            chunk_phrases = phrases[start:end]
-            try:
-                emb = self.model.encode(
-                    chunk_phrases,
-                    batch_size=self.batch_size,
-                    show_progress_bar=False,
-                    convert_to_numpy=True,
-                )
-            except RuntimeError as e:
-                if "CUDA" in str(e):
-                    logger.warning("CUDA OOM → retrying this chunk on CPU")
-                    cpu_model = SentenceTransformer(self.model_name, device="cpu")
-                    emb = cpu_model.encode(
-                        chunk_phrases, batch_size=32, show_progress_bar=False
-                    )
-                else:
-                    raise
-            np.save(f_out, np.asarray(emb, dtype=np.float32))
+        # Try loading cached embeddings
+        if cache_file.exists():
+            logger.info(f"🔁 Loading cached embeddings for '{dataset_name}' from {cache_file}")
+            return np.load(cache_file)
 
-        f_out.close()
+        # Compute new embeddings
+        logger.info(f"⚙️ Computing embeddings for '{dataset_name}' using {self.model_name}")
+        embeddings = self.model.encode(
+            phrases,
+            batch_size=self.batch_size,
+            convert_to_numpy=True,
+            show_progress_bar=True,
+            device=self.device,
+        )
 
-        # Merge all chunk arrays into a single file
-        logger.info("Finalizing embeddings cache...")
-        all_embs = self._load_all_chunks(tmp_path)
-        np.save(cache_path, all_embs)
-        Path(tmp_path).unlink(missing_ok=True)
-        logger.info(f"Saved full embeddings cache to {cache_path}")
-        return all_embs
-
-    # ---------------------------------------------------------------------
-
-    def _load_all_chunks(self, tmp_path: Path) -> np.ndarray:
-        """Load sequential .npy chunks from append file."""
-        data = []
-        with open(tmp_path, "rb") as f:
-            while True:
-                try:
-                    data.append(np.load(f))
-                except (ValueError, EOFError):
-                    break
-        return np.concatenate(data, axis=0)
-
-    def _cache_path(self, phrases: List[str]) -> Path:
-        sample = "\n".join(phrases[:1000])
-        data_hash = hashlib.md5(sample.encode("utf-8")).hexdigest()
-        name = f"embeddings_{self.model_name.replace('/', '-')}_{data_hash}.npy"
-        return self.cache_dir / name
+        # Save cache
+        np.save(cache_file, embeddings)
+        logger.info(f"✅ Saved embeddings to {cache_file}")
+        return embeddings

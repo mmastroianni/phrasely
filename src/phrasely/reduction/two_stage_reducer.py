@@ -63,14 +63,24 @@ class TwoStageReducer:
         """Apply SVD → UMAP reduction pipeline."""
         n_rows, n_cols = X.shape
         vram_gb = get_device_info().get("total", 0)
+
         logger.info(
             f"HybridReducer: input shape={X.shape}, "
             f"GPU={self.use_gpu}, VRAM≈{vram_gb:.1f} GB"
         )
 
+        # --- Ensure dtype compatibility for cuML ---
+        if X.dtype not in (np.float32, np.float64):
+            logger.info(
+                f"Converting input from {X.dtype} to float32 for GPU compatibility."
+            )
+            X = X.astype(np.float32)
+
         t0 = perf_counter()
 
-        # --- Stage 1: SVD ---
+        # ============================
+        # Stage 1: SVD
+        # ============================
         if self.use_gpu:
             try:
                 svd = GPUSVD(n_components=self.svd_components)
@@ -95,7 +105,13 @@ class TwoStageReducer:
                 f"Stage 1 (CPU SVD): reduced {n_cols} → {self.svd_components} dims"
             )
 
-        # --- Stage 2: UMAP ---
+        # Ensure proper dtype before UMAP
+        if X_svd.dtype not in (np.float32, np.float64):
+            X_svd = X_svd.astype(np.float32)
+
+        # ============================
+        # Stage 2: UMAP
+        # ============================
         if self.use_gpu:
             try:
                 umap = GPUUMAP(
@@ -108,8 +124,7 @@ class TwoStageReducer:
                 X_umap = umap.fit_transform(X_svd)
                 logger.info(
                     f"Stage 2 (GPU UMAP): reduced "
-                    f"{self.svd_components}"
-                    f" → {self.umap_components} dims"
+                    f"{self.svd_components} → {self.umap_components} dims"
                 )
             except Exception as e:
                 logger.warning(f"GPU UMAP failed ({e}); falling back to CPU.")
@@ -135,10 +150,6 @@ class TwoStageReducer:
             )
             X_umap = umap.fit_transform(X_svd)
             logger.info(
-                f"Stage 2 (CPU UMAP): reduced {self.svd_components}"
-                f" → {self.umap_components} dims"
-            )
-
-        t_total = perf_counter() - t0
-        logger.info(f"HybridReducer complete in {t_total:.2f}s.")
-        return np.asarray(X_umap)
+                f"Stage 2 (CPU UMAP): reduced {self.svd_components} "
+                f"→ {self.umap_components} dims")
+        return X_umap

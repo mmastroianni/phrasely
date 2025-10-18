@@ -1,17 +1,18 @@
 import logging
-
 import numpy as np
-from sklearn.decomposition import TruncatedSVD as CPUSVD  # ✅ always available
+from sklearn.decomposition import TruncatedSVD as CPUSVD
 
 from phrasely.utils.gpu_utils import is_gpu_available
 
 # --- Try GPU backend (optional) ---
 try:
+    import cupy as cp
     from cuml.decomposition import TruncatedSVD as GPUSVD
 
     GPU_IMPORTED = True
 except Exception:
     GPUSVD = None
+    cp = None
     GPU_IMPORTED = False
 
 logger = logging.getLogger(__name__)
@@ -36,29 +37,24 @@ class SVDReducer:
         self.use_gpu = use_gpu and gpu_ok
 
     def reduce(self, X: np.ndarray) -> np.ndarray:
-        # --- Validation ---
         if not isinstance(X, np.ndarray):
             raise TypeError(f"SVDReducer expected numpy.ndarray, got {type(X)}")
-
         if X.ndim != 2:
             raise ValueError(
-                "SVDReducer expected 2D array, got"
-                + f"shape {getattr(X, 'shape', None)}"
+                f"SVDReducer expected 2D array, got shape={getattr(X, 'shape', None)}"
             )
 
         n_samples, n_features = X.shape
         if n_samples < 2:
             logger.warning(
-                "SVDReducer: input too small for reduction"
-                + f"(samples={n_samples}, features={n_features})."
+                f"SVDReducer: input too small for reduction (samples={n_samples}, features={n_features})."
             )
             return X
 
         n_components = min(self.n_components, n_features - 1)
         if n_components < self.n_components:
             logger.info(
-                "SVDReducer: reducing n_components from"
-                + f"{self.n_components} → {n_components}."
+                f"SVDReducer: reducing n_components from {self.n_components} → {n_components}."
             )
 
         backend = "GPU" if self.use_gpu else "CPU"
@@ -66,16 +62,18 @@ class SVDReducer:
 
         try:
             if self.use_gpu and GPUSVD is not None:
+                logger.info("Running cuML TruncatedSVD on GPU...")
                 svd = GPUSVD(n_components=n_components)
+                X_gpu = cp.asarray(X.astype(np.float32))  # <-- convert here
+                X_reduced = svd.fit_transform(X_gpu)
+                reduced = cp.asnumpy(X_reduced)
             else:
                 svd = CPUSVD(n_components=n_components)
+                reduced = svd.fit_transform(X)
 
-            reduced = svd.fit_transform(X)
-            logger.info(
-                f"SVDReducer: reduced {n_features} → {n_components}" + "dimensions."
-            )
+            logger.info(f"SVDReducer: reduced {n_features} → {n_components} dimensions.")
             return reduced
 
         except Exception as e:
-            logger.warning(f"SVDReducer failed: {e}. " + "Returning original input.")
+            logger.warning(f"SVDReducer failed: {e}. Returning original input.")
             return X
