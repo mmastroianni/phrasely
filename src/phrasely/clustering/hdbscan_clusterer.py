@@ -1,17 +1,17 @@
 import logging
-
 import numpy as np
 from hdbscan import HDBSCAN as CPUHDBSCAN
 from phrasely.utils import gpu_utils
 
+# Expose for test monkeypatching
 is_gpu_available = gpu_utils.is_gpu_available
 
 logger = logging.getLogger(__name__)
 
+# --- Try GPU backend (RAPIDS cuML) ---
 try:
     import cupy as cp
     from cuml.cluster import HDBSCAN as GPUHDBSCAN
-
     GPU_IMPORTED = True
 except Exception as e:
     GPUHDBSCAN = None
@@ -24,9 +24,9 @@ class HDBSCANClusterer:
     """
     Clusters embeddings using HDBSCAN with optional GPU acceleration.
 
-    - GPU used if available and requested.
-    - Falls back gracefully with clear logging.
-    - Validates 2D input and returns all -1s on failure instead of random noise.
+    - Uses cuML.HDBSCAN if GPU and RAPIDS are available.
+    - Falls back gracefully to sklearn/hdbscan on CPU.
+    - Validates 2D input and returns all -1 labels on failure.
     """
 
     def __init__(
@@ -36,35 +36,42 @@ class HDBSCANClusterer:
         min_samples: int | None = None,
         **kwargs,
     ):
+        """
+        Initialize the HDBSCAN clusterer.
+
+        Parameters
+        ----------
+        use_gpu : bool, default=False
+            Whether to attempt GPU acceleration.
+        min_cluster_size : int, default=5
+            Minimum cluster size.
+        min_samples : int or None, optional
+            Minimum samples for HDBSCAN core distance.
+        **kwargs :
+            Extra keyword args passed to the HDBSCAN implementation.
+        """
         self.min_cluster_size = min_cluster_size
         self.min_samples = min_samples
         self.user_requested_gpu = use_gpu
         self.kwargs = kwargs
 
         # --- Robust GPU detection ---
-        gpu_ok = GPU_IMPORTED
-        if not gpu_ok:
-            logger.warning("cuML HDBSCAN not importable → CPU only.")
-        else:
-            # Even if is_gpu_available() says False, cuML may still work
-            try:
-                import cupy
-
-                n_devices = cupy.cuda.runtime.getDeviceCount()
-                gpu_ok = n_devices > 0
-            except Exception as e:
-                logger.warning(f"GPU availability check failed: {e}")
-                gpu_ok = False
+        try:
+            gpu_ok = bool(GPU_IMPORTED and gpu_utils.is_gpu_available())
+        except Exception as e:
+            logger.warning(f"GPU availability check failed: {e}")
+            gpu_ok = False
 
         if use_gpu and not gpu_ok:
             logger.warning("GPU requested but unavailable → falling back to CPU.")
-        self.use_gpu = use_gpu and gpu_ok
+        self.use_gpu = bool(use_gpu and gpu_ok)
 
         backend = "GPU" if self.use_gpu else "CPU"
         logger.info(f"HDBSCANClusterer initialized with {backend} backend.")
 
     # ------------------------------------------------------------------
     def cluster(self, X: np.ndarray) -> np.ndarray:
+        """Run HDBSCAN clustering on input embeddings."""
         if not isinstance(X, np.ndarray):
             raise TypeError(f"HDBSCANClusterer expected numpy.ndarray, got {type(X)}")
         if X.ndim != 2:
