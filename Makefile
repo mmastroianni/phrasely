@@ -51,6 +51,9 @@ format:
 	black src tests
 	isort src tests
 
+strip-notebooks:
+	find notebooks -name '*.ipynb' -exec nbstripout {} \;
+
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	rm -rf build dist .pytest_cache .mypy_cache *.egg-info
