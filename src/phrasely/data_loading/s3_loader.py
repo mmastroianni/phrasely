@@ -1,6 +1,7 @@
 import logging
 from typing import Generator, Optional
 
+import botocore
 import boto3
 import numpy as np
 import pandas as pd
@@ -31,7 +32,7 @@ class CC100S3Loader:
         self.max_files = max_files
         self.batch_size = batch_size
 
-        self.s3 = boto3.client("s3")
+        self.s3 = boto3.client("s3", region_name="us-east-1")
 
         logger.info(f"Scanning S3: s3://{bucket}/{prefix}")
 
