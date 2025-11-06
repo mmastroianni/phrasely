@@ -23,7 +23,8 @@ class PhraseEmbedder:
 
     def __init__(
         self,
-        model_name: str = "epam/sbert-e5-small-v2",  # ✅ default model (your choice)
+        # model_name: str = "epam/sbert-e5-small-v2",  # ✅ default model (your choice)
+        model_name: str = "intfloat/e5-small-v2",
         batch_size: int = 32,
         device: str | None = None,
         prefer_fp16: bool = True,
