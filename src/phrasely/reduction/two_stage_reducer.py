@@ -1,3 +1,4 @@
+# two_stage_reducer.py
 import logging
 
 import numpy as np
@@ -7,38 +8,33 @@ try:
     from cuml.manifold import UMAP as GPUUMAP
 
     _HAS_CUML = True
-except ImportError:
+except Exception:
     _HAS_CUML = False
 
 from sklearn.decomposition import TruncatedSVD as CPUSVD
 from umap import UMAP as CPUUMAP
-
-from phrasely.utils.gpu_utils import get_device_info
 
 logger = logging.getLogger(__name__)
 
 
 class TwoStageReducer:
     """
-    Two-stage dimensionality reducer: linear SVD followed by non-linear UMAP.
+    SVD → UMAP reducer.
 
     Stage 1: TruncatedSVD (GPU or CPU)
     Stage 2: UMAP (GPU or CPU)
 
     Parameters
     ----------
-    svd_components : int, default=100
+    svd_components : int
         Number of linear SVD components.
-    umap_components : int, default=15
-        Number of non-linear UMAP components.
-    use_gpu : bool, default=True
-        Whether to attempt GPU acceleration (requires RAPIDS/cuML).
-    n_neighbors : int, default=15
-        Number of neighbors for UMAP graph.
-    min_dist : float, default=0.1
-        Minimum distance between UMAP embeddings.
-    metric : str, default="cosine"
-        Distance metric for UMAP.
+    umap_components : int
+        Final non-linear embedding dim.
+    use_gpu : bool
+        Attempt GPU both stages.
+    n_neighbors : int
+    min_dist : float
+    metric : str
     """
 
     def __init__(
@@ -59,20 +55,14 @@ class TwoStageReducer:
 
     # ----------------------------------------------------------
     def reduce(self, X: np.ndarray) -> np.ndarray:
-        """Apply SVD → UMAP reduction pipeline."""
         n_rows, n_cols = X.shape
-        vram_gb = get_device_info().get("total", 0)
-
         logger.info(
-            f"HybridReducer: input shape={X.shape}, "
-            f"GPU={self.use_gpu}, VRAM≈{vram_gb:.1f} GB"
+            f"TwoStageReducer: X={X.shape}, GPU={self.use_gpu}, "
+            f"SVD={self.svd_components}, UMAP={self.umap_components}"
         )
 
-        # --- Ensure dtype compatibility for cuML ---
+        # ensure dtype
         if X.dtype not in (np.float32, np.float64):
-            logger.info(
-                f"Converting input from {X.dtype} to float32 for GPU compatibility."
-            )
             X = X.astype(np.float32)
 
         # ============================
@@ -82,27 +72,18 @@ class TwoStageReducer:
             try:
                 svd = GPUSVD(n_components=self.svd_components)
                 X_svd = svd.fit_transform(X)
-                logger.info(
-                    f"Stage 1 (GPU SVD): reduced {n_cols} → "
-                    f"{self.svd_components} dims"
-                )
+                logger.info(f"Stage 1 GPU SVD: {n_cols} → {self.svd_components}")
             except Exception as e:
                 logger.warning(f"GPU SVD failed ({e}); falling back to CPU.")
                 self.use_gpu = False
                 svd = CPUSVD(n_components=self.svd_components)
                 X_svd = svd.fit_transform(X)
-                logger.info(
-                    f"Stage 1 (CPU SVD): reduced {n_cols} → "
-                    f"{self.svd_components} dims"
-                )
+                logger.info(f"Stage 1 CPU SVD: {n_cols} → {self.svd_components}")
         else:
             svd = CPUSVD(n_components=self.svd_components)
             X_svd = svd.fit_transform(X)
-            logger.info(
-                f"Stage 1 (CPU SVD): reduced {n_cols} → {self.svd_components} dims"
-            )
+            logger.info(f"Stage 1 CPU SVD: {n_cols} → {self.svd_components}")
 
-        # Ensure proper dtype before UMAP
         if X_svd.dtype not in (np.float32, np.float64):
             X_svd = X_svd.astype(np.float32)
 
@@ -120,34 +101,20 @@ class TwoStageReducer:
                 )
                 X_umap = umap.fit_transform(X_svd)
                 logger.info(
-                    f"Stage 2 (GPU UMAP): reduced "
-                    f"{self.svd_components} → {self.umap_components} dims"
+                    f"Stage 2 GPU UMAP: {self.svd_components} → {self.umap_components}"
                 )
+                return X_umap
             except Exception as e:
                 logger.warning(f"GPU UMAP failed ({e}); falling back to CPU.")
-                umap = CPUUMAP(
-                    n_components=self.umap_components,
-                    n_neighbors=self.n_neighbors,
-                    min_dist=self.min_dist,
-                    metric=self.metric,
-                    verbose=False,
-                )
-                X_umap = umap.fit_transform(X_svd)
-                logger.info(
-                    f"Stage 2 (CPU UMAP): reduced {self.svd_components} "
-                    f"→ {self.umap_components} dims"
-                )
-        else:
-            umap = CPUUMAP(
-                n_components=self.umap_components,
-                n_neighbors=self.n_neighbors,
-                min_dist=self.min_dist,
-                metric=self.metric,
-                verbose=False,
-            )
-            X_umap = umap.fit_transform(X_svd)
-            logger.info(
-                f"Stage 2 (CPU UMAP): reduced {self.svd_components} "
-                f"→ {self.umap_components} dims"
-            )
+                self.use_gpu = False
+
+        umap = CPUUMAP(
+            n_components=self.umap_components,
+            n_neighbors=self.n_neighbors,
+            min_dist=self.min_dist,
+            metric=self.metric,
+            verbose=False,
+        )
+        X_umap = umap.fit_transform(X_svd)
+        logger.info(f"Stage 2 CPU UMAP: {self.svd_components} → {self.umap_components}")
         return X_umap

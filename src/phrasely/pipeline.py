@@ -2,202 +2,237 @@ import gc
 import logging
 from contextlib import contextmanager
 from time import perf_counter
-from typing import Optional, Type
+from typing import Dict, Optional, Type
 
 import numpy as np
 import pandas as pd
 import torch
 
 from phrasely.clustering.hdbscan_clusterer import HDBSCANClusterer
-from phrasely.embeddings.phrase_embedder import PhraseEmbedder
+from phrasely.embeddings.phrase_embedder import EmbedderConfig, PhraseEmbedder
 from phrasely.medoids.medoid_selector import MedoidSelector
 from phrasely.pipeline_result import PipelineResult
 from phrasely.reduction.svd_reducer import SVDReducer
+
+# If you want the two-stage reducer, keep/import it and enable via flag
+# from phrasely.reduction.hybrid_reducer import TwoStageReducer
 from phrasely.utils.gpu_utils import get_device_info
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------
-# 🎯 timing utility
-# ---------------------------------------------------------------------
 @contextmanager
 def catch_time(label: str):
     logger.info(f"▶️  {label}...")
     start = perf_counter()
-    yield
-    elapsed = perf_counter() - start
-    logger.info(f"{label} completed in {elapsed:.3f}s.")
+    try:
+        yield
+    finally:
+        elapsed = perf_counter() - start
+        logger.info(f"{label} completed in {elapsed:.3f}s.")
 
 
-# ---------------------------------------------------------------------
-# 🚀 main pipeline
-# ---------------------------------------------------------------------
+def _estimate_gpu_hdbscan_capacity(dim: int, vram_gb: float) -> int:
+    """
+    Rough, conservative capacity estimator (rows) for cuML HDBSCAN memory.
+    Tuned so T4 (≈16 GB), dim=100 → ~740k rows allowance.
+
+    Scales inversely with dimension; linear in VRAM.
+    """
+    if vram_gb <= 0:
+        return 0
+    base_rows_100d = 740_000.0 * (vram_gb / 16.0)  # anchor to T4
+    return int(max(50_000, base_rows_100d * (100.0 / max(1, dim))))
+
+
+def _free_cuda():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+
 def run_pipeline(
     loader_cls: Type,
-    loader_kwargs: Optional[dict] = None,
-    n_components: int = 100,
-    use_gpu: bool = True,
+    loader_kwargs: Optional[Dict] = None,
+    *,
+    # --- embedding ---
+    embed_model: str = "intfloat/e5-small-v2",
+    embed_max_len: int = 512,
+    embed_batch_size: Optional[int] = None,  # auto if None
+    # --- reduction ---
+    reducer: str = "svd",  # "svd" or "two_stage"
+    svd_components: int = 100,
+    # umap_components: int = 15,  # if you enable a two-stage reducer
+    # --- clustering ---
+    use_gpu_clustering: bool = True,
     min_cluster_size: int = 15,
     min_samples: Optional[int] = None,
-    stream: bool = False,
+    # --- loading/streaming ---
+    stream: bool = True,
+    max_phrases: Optional[int] = None,  # cap total rows when streaming
 ):
     """
-    Full Phrasely pipeline:
-        data → embedding → SVD → HDBSCAN → medoids
+    Full pipeline: Load → Embed → Reduce → Cluster → Medoids.
 
-    Works in both:
-        • streaming mode (S3Loader)
-        • offline mode (local Arrow/Parquet)
+    - Streams from `loader_cls.stream_load()` if `stream=True`
+    - Uses GPU for embeddings by default (fp16), with auto batch size
+    - Uses cuML SVD (and optionally UMAP) when available
+    - Chooses GPU HDBSCAN only if rows <= estimated capacity
     """
-
     loader_kwargs = loader_kwargs or {}
     logger.info("🚀 Starting Phrasely pipeline...")
 
-    # ------------------------------------------------------------------
-    # GPU VRAM capacity-aware limits
-    # ------------------------------------------------------------------
-    vram_gb = get_device_info().get("total", 0)
+    # --- hardware info ---
+    dev = get_device_info()
+    vram_gb = float(dev.get("total", 0.0))
     logger.info(f"Detected GPU VRAM: {vram_gb:.1f} GB")
 
-    _BASE_ROWS = 200_000
-    scale_factor = max(1, 4.0 / max(1, vram_gb)) if vram_gb > 0 else 1.0
+    # This governs HDBSCAN GPU offload; dim will be known after reduction
+    # We will decide later once we know rows and dim.
+    # ----------------------
 
-    max_rows_gpu = int(_BASE_ROWS / scale_factor)
-    logger.info(
-        f"Adaptive GPU limits — SVD: {max_rows_gpu:,} rows, "
-        f"HDBSCAN: {max_rows_gpu:,} rows."
-    )
-
-    # ------------------------------------------------------------------
-    # ✅ Stage 1: Loading + Embedding
-    # ------------------------------------------------------------------
+    # =========================
+    # Stage 1: Load + Embed
+    # =========================
     with catch_time("Loading and embedding phrases"):
-
         loader = loader_cls(**loader_kwargs)
 
-        # ==============================================================
-        # STREAMING MODE
-        # ==============================================================
+        embedder = PhraseEmbedder(
+            EmbedderConfig(
+                model_name=embed_model,
+                max_length=embed_max_len,
+                batch_size=embed_batch_size,  # auto if None
+                device="cuda" if torch.cuda.is_available() else "cpu",
+                normalize=True,
+                use_torch_compile=True,
+            )
+        )
+
         if stream:
-            embedder = PhraseEmbedder(device="cuda" if use_gpu else "cpu")
+            all_phrases = []
+            all_chunks = []
 
-            all_phrases: list[str] = []
-            all_embeddings: list[np.ndarray] = []
-
-            max_phrases = loader_kwargs.get("max_phrases", None)
-
+            total_seen = 0
             for i, df in enumerate(loader.stream_load(), 1):
-                batch_phrases = df["phrase"].tolist()
+                phrases = df["phrase"].tolist()
 
-                # ✅ IMPORTANT: disable caching in streaming mode
-                batch_embeddings = embedder.embed(
-                    batch_phrases,
-                    dataset_name=None,  # ← no cache in streaming
-                )
+                # Optional global cap
+                if max_phrases is not None:
+                    remaining = max_phrases - total_seen
+                    if remaining <= 0:
+                        logger.info("Reached max_phrases limit; stopping stream.")
+                        break
+                    if len(phrases) > remaining:
+                        phrases = phrases[:remaining]
 
-                # Safety alignment check
-                if batch_embeddings.shape[0] != len(batch_phrases):
-                    logger.warning(
-                        f"⚠️ Embedding size mismatch in batch {i}: "
-                        f"{len(batch_phrases)} phrases. "
-                        f"Truncating to smallest length."
-                    )
-                    n = min(batch_embeddings.shape[0], len(batch_phrases))
-                    batch_phrases = batch_phrases[:n]
-                    batch_embeddings = batch_embeddings[:n]
+                X = embedder.embed(phrases, dataset_name=None)  # no cache across shards
+                # sanity (rare tokenizer edge-cases)
+                n = min(len(phrases), X.shape[0])
+                phrases = phrases[:n]
+                X = X[:n]
 
-                all_phrases.extend(batch_phrases)
-                all_embeddings.append(batch_embeddings)
+                all_phrases.extend(phrases)
+                all_chunks.append(X)
+                total_seen += n
 
-                logger.info(f"Streamed batch {i}: {len(batch_phrases):,} phrases")
+                logger.info(f"Streamed batch {i}: +{n:,} (total={total_seen:,})")
 
-                if max_phrases and len(all_phrases) >= max_phrases:
+                if max_phrases is not None and total_seen >= max_phrases:
                     logger.info("Reached max_phrases limit; stopping stream.")
                     break
 
-            embeddings = np.vstack(all_embeddings)
-            phrases = all_phrases[: len(embeddings)]
+            embeddings = (
+                np.vstack(all_chunks)
+                if all_chunks
+                else np.empty((0, 0), dtype=np.float32)
+            )
+            phrases = all_phrases
+            del all_chunks
 
-        # ==============================================================
-        # OFFLINE MODE
-        # ==============================================================
         else:
             df = loader.load()
-            phrases = df["phrase"].tolist()
-
-            embedder = PhraseEmbedder(device="cuda" if use_gpu else "cpu")
-
-            # ✅ allow caching in offline mode
-            dataset_name = loader_kwargs.get("dataset_name", "default")
-
-            embeddings = embedder.embed(
-                phrases,
-                dataset_name=dataset_name,
+            phrases = (
+                df["phrase"].tolist() if isinstance(df, pd.DataFrame) else list(df)
             )
+            if max_phrases is not None:
+                phrases = phrases[:max_phrases]
+            embeddings = embedder.embed(phrases, dataset_name=None)
 
-        # ✅ free VRAM after embedding
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            gc.collect()
-            logger.info("🧹 Freed GPU memory after embedding.")
+        _free_cuda()
+        logger.info("🧹 Freed GPU memory after embedding.")
 
-    # ------------------------------------------------------------------
-    # ✅ Stage 2: Dimensionality reduction
-    # ------------------------------------------------------------------
+    if embeddings.size == 0:
+        raise ValueError("No embeddings produced; check loader or inputs.")
+
+    # =========================
+    # Stage 2: Reduction
+    # =========================
     with catch_time("Reducing dimensions"):
+        if reducer == "svd":
+            reducer_obj = SVDReducer(n_components=svd_components, use_gpu=True)
+            orig_dim = embeddings.shape[1]
+            reduced = reducer_obj.reduce(embeddings)
+            red_dim = reduced.shape[1]
+            logger.info(f"SVD reduced {orig_dim} → {red_dim} dims.")
+        elif reducer == "two_stage":
+            # If you enable this, import TwoStageReducer above
+            # reducer_obj = TwoStageReducer(
+            #     svd_components=svd_components,
+            #     umap_components=15,
+            #     use_gpu=True,
+            #     n_neighbors=15,
+            #     min_dist=0.1,
+            #     metric="cosine",
+            # )
+            # reduced = reducer_obj.reduce(embeddings)
+            raise NotImplementedError(
+                "Enable TwoStageReducer import & section if you want two-stage."
+            )
+        else:
+            raise ValueError("reducer must be 'svd' or 'two_stage'")
 
-        reducer = SVDReducer(n_components=n_components, use_gpu=use_gpu)
-        orig_dim = embeddings.shape[1]
-
-        reduced = reducer.reduce(embeddings)
         del embeddings
+        _free_cuda()
+        logger.info("🧹 Freed GPU memory after reduction.")
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            gc.collect()
-            logger.info("🧹 Freed GPU memory after SVD reduction.")
+    # =========================
+    # Stage 3: Clustering
+    # =========================
+    n_rows, red_dim = reduced.shape
+    gpu_cap = _estimate_gpu_hdbscan_capacity(red_dim, vram_gb)
+    allow_gpu = use_gpu_clustering and (n_rows <= gpu_cap)
 
-    # ------------------------------------------------------------------
-    # ✅ Stage 3: Clustering
-    # ------------------------------------------------------------------
-    if reduced.shape[0] > max_rows_gpu:
-        logger.info("Too many rows for GPU VRAM → forcing CPU clustering.")
-        use_gpu = False
+    if not allow_gpu and use_gpu_clustering:
+        logger.info(
+            f"Too many rows for GPU HDBSCAN at {red_dim} dims → "
+            f"forcing CPU clustering (rows={n_rows:,} > cap≈{gpu_cap:,})."
+        )
 
     with catch_time("Clustering phrases"):
-
         clusterer = HDBSCANClusterer(
-            use_gpu=use_gpu,
+            use_gpu=allow_gpu,
             min_cluster_size=min_cluster_size,
             min_samples=min_samples,
         )
-
         labels = clusterer.cluster(reduced)
         del clusterer
+        _free_cuda()
+        logger.info("🧹 Freed GPU memory after clustering.")
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            gc.collect()
-            logger.info("🧹 Freed GPU memory after clustering.")
-
-    # Double-check alignment
     if not (len(phrases) == reduced.shape[0] == labels.shape[0]):
         raise ValueError(
             f"Length mismatch: phrases={len(phrases)}, "
             f"reduced={reduced.shape[0]}, labels={labels.shape[0]}"
         )
 
-    # ------------------------------------------------------------------
-    # ✅ Stage 4: Medoids
-    # ------------------------------------------------------------------
+    # =========================
+    # Stage 4: Medoids
+    # =========================
     with catch_time("Selecting medoids"):
-
-        selector = MedoidSelector(return_indices=True)  # ensure consistent output
+        selector = MedoidSelector(return_indices=True)  # indices + phrases
         medoid_indices, medoid_phrases = selector.select(phrases, reduced, labels)
 
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-
     logger.info(
         f"✅ Pipeline complete: {n_clusters} clusters, {len(medoid_phrases)} medoids."
     )
@@ -208,6 +243,6 @@ def run_pipeline(
         labels=labels,
         medoids=medoid_phrases,
         medoid_indices=medoid_indices,
-        embeddings=None,        # we free full embeddings
-        orig_dim=orig_dim,
+        embeddings=None,
+        orig_dim=red_dim,
     )
