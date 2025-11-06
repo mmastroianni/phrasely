@@ -4,9 +4,9 @@ from typing import Generator, List, Optional
 
 import boto3
 import botocore
+import pandas as pd
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +38,14 @@ class CC100S3Loader:
         language: str = "",
         max_files: Optional[int] = None,
         batch_size: int = 20_000,
-        max_phrases: Optional[int] = None,   # ✅ added
+        max_phrases: Optional[int] = None,  # ✅ added
     ):
         self.bucket = bucket
         self.prefix = prefix.rstrip("/")
         self.language = language
         self.max_files = max_files
         self.batch_size = batch_size
-        self.max_phrases = max_phrases        # ✅ added
+        self.max_phrases = max_phrases  # ✅ added
 
         # Explicit region
         session = boto3.session.Session()
@@ -91,7 +91,9 @@ class CC100S3Loader:
         try:
             resp = self.s3.get_object(Bucket=self.bucket, Key=key)
         except botocore.exceptions.ClientError as e:
-            raise FileNotFoundError(f"Failed to download s3://{self.bucket}/{key}") from e
+            raise FileNotFoundError(
+                f"Failed to download s3://{self.bucket}/{key}"
+            ) from e
 
         raw_bytes = resp["Body"].read()
         buf = io.BytesIO(raw_bytes)
