@@ -22,5 +22,9 @@ dependencies:
   - mypy
   - jupyterlab
   - sentence-transformers=3.0.*
+    
+    # S3 / AWS
+    - boto3
+    - s3fs                  # fast parquet/arrow access
   - pip:
       - rapidfuzz>=3.6.1

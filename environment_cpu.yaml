@@ -23,5 +23,8 @@ dependencies:
   - mypy
   - pytest
   - matplotlib>=3.8
+    # S3 / AWS
+  - boto3
+  - s3fs                  # fast parquet/arrow access
   - pip:
   - rapidfuzz>=3.6.1
