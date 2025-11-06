@@ -6,26 +6,29 @@ import boto3
 import botocore
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
 class CC100S3Loader:
     """
-    Stream CC100 Arrow files directly from S3 without local storage.
+    Stream CC100 Arrow files directly from S3 with no local disk usage.
 
     Parameters
     ----------
     bucket : str
         S3 bucket name.
     prefix : str
-        The directory/prefix inside the bucket (e.g. "cc100").
-    language : str, default="en"
-        Language filter for filenames.
+        Path/prefix in the bucket (e.g. "cc100").
+    language : str, default=""
+        Optional filter on filenames.
     max_files : int, optional
-        Maximum number of shards to read.
+        Max number of shards to read.
     batch_size : int, default=20000
-        Rows per yielded batch.
+        Size of yielded mini-batches.
+    max_phrases : int, optional
+        Global cap on number of phrases to load from S3.
     """
 
     def __init__(
@@ -35,25 +38,27 @@ class CC100S3Loader:
         language: str = "",
         max_files: Optional[int] = None,
         batch_size: int = 20_000,
+        max_phrases: Optional[int] = None,   # ✅ added
     ):
         self.bucket = bucket
-        self.prefix = prefix.rstrip("/")  # ensure no trailing slash
+        self.prefix = prefix.rstrip("/")
         self.language = language
         self.max_files = max_files
         self.batch_size = batch_size
+        self.max_phrases = max_phrases        # ✅ added
 
-        # ✅ Explicit region (us-east-1 bucket) – fixes empty list_objects issue
+        # Explicit region
         session = boto3.session.Session()
         region = session.region_name or "us-east-1"
-
         self.s3 = boto3.client("s3", region_name=region)
 
         logger.info(f"Scanning S3: s3://{bucket}/{self.prefix}")
 
         self.files = self._list_s3_shards()
+
         if not self.files:
             raise FileNotFoundError(
-                f"No Arrow/Parquet files found under s3://{bucket}/{self.prefix}"
+                f"No Arrow/Parquet shards under s3://{bucket}/{self.prefix}"
             )
 
         logger.info(f"Found {len(self.files)} S3 shards.")
@@ -64,9 +69,7 @@ class CC100S3Loader:
 
     # ------------------------------------------------------------------
     def _list_s3_shards(self) -> List[str]:
-        """List Arrow/Parquet files under prefix."""
         paginator = self.s3.get_paginator("list_objects_v2")
-
         keys: List[str] = []
 
         for page in paginator.paginate(
@@ -76,14 +79,13 @@ class CC100S3Loader:
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 if key.endswith(".arrow") or key.endswith(".parquet"):
-                    if not self.language or self.language in key.lower():
+                    if not self.language or self.language.lower() in key.lower():
                         keys.append(key)
 
         return sorted(keys)
 
     # ------------------------------------------------------------------
     def _load_arrow_from_s3(self, key: str) -> pa.Table:
-        """Download arrow/parquet shard from S3 into memory and return Arrow table."""
         logger.info(f"Downloading: s3://{self.bucket}/{key}")
 
         try:
@@ -94,7 +96,7 @@ class CC100S3Loader:
         raw_bytes = resp["Body"].read()
         buf = io.BytesIO(raw_bytes)
 
-        # First try Arrow file reader
+        # Try arrow file first
         try:
             with pa_ipc.open_file(buf) as reader:
                 return reader.read_all()
@@ -104,26 +106,21 @@ class CC100S3Loader:
                 return reader.read_all()
 
     # ------------------------------------------------------------------
-    def _table_to_df(self, table: pa.Table):
-        """Normalize Arrow table into DataFrame with 'phrase' column."""
+    def _table_to_df(self, table: pa.Table) -> pd.DataFrame:
         df = table.to_pandas()
-
         if "text" in df.columns:
             df = df.rename(columns={"text": "phrase"})
-
-        df = df.dropna(subset=["phrase"])
-        return df
+        return df.dropna(subset=["phrase"])
 
     # ------------------------------------------------------------------
-    def stream_load(self) -> Generator:
+    def stream_load(self) -> Generator[pd.DataFrame, None, None]:
         """
-        Yield batches from S3 shards as Pandas DataFrames.
-
-        Fully streaming — no local disk usage.
+        Stream rows from S3 in mini-batches, respecting max_phrases.
         """
+        yielded_total = 0
 
-        for idx, key in enumerate(self.files, start=1):
-            logger.info(f"[{idx}/{len(self.files)}] Loading shard: {key}")
+        for shard_idx, key in enumerate(self.files, start=1):
+            logger.info(f"[{shard_idx}/{len(self.files)}] Loading shard: {key}")
 
             table = self._load_arrow_from_s3(key)
             df = self._table_to_df(table)
@@ -131,13 +128,32 @@ class CC100S3Loader:
             total_rows = len(df)
             logger.info(f"Shard rows: {total_rows:,}")
 
-            # yield small DataFrames
+            # yield in batches
             for start in range(0, total_rows, self.batch_size):
                 sub = df.iloc[start : start + self.batch_size]
+                batch_len = len(sub)
+
+                # handle max_phrases cutoff
+                if self.max_phrases is not None:
+                    remaining = self.max_phrases - yielded_total
+                    if remaining <= 0:
+                        logger.info("Reached max_phrases limit; stopping stream.")
+                        return
+                    if batch_len > remaining:
+                        sub = sub.iloc[:remaining]
+                        logger.info("Trimmed final batch due to max_phrases.")
+
+                yielded_total += len(sub)
 
                 logger.info(
                     f"Yielding {len(sub):,} rows "
                     f"({start // self.batch_size + 1}/"
                     f"{(total_rows + self.batch_size - 1) // self.batch_size})"
                 )
+
                 yield sub
+
+                # stop early if limit reached
+                if self.max_phrases is not None and yielded_total >= self.max_phrases:
+                    logger.info("Reached max_phrases limit; stopping stream.")
+                    return
