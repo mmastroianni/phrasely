@@ -158,7 +158,7 @@ def run_pipeline(
 
     # --- Stage 4: Medoid selection ---
     with catch_time("Selecting medoids"):
-        selector = MedoidSelector()
+        selector = MedoidSelector(return_indices=True)
         medoid_indices, medoid_phrases = selector.select(phrases, reduced, labels)
 
     # --- Results ---
