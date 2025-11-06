@@ -33,6 +33,10 @@ dependencies:
   - pytorch-cuda=12.1     # ensures GPU build of PyTorch
   - sentence-transformers=3.0.*
 
+  # S3 / AWS
+  - boto3
+  - s3fs                  # fast parquet/arrow access
+
   # Utilities and dev tools
   - tqdm
   - psutil
