@@ -5,7 +5,6 @@ from time import perf_counter
 from typing import Optional, List, Dict, Any
 
 import numpy as np
-import pandas as pd
 import torch
 
 from phrasely.embeddings.phrase_embedder import PhraseEmbedder
