@@ -1,155 +1,158 @@
-from __future__ import annotations
-
 import gc
 import logging
 from contextlib import contextmanager
 from time import perf_counter
-from typing import Any, Dict, List
+from typing import Optional, List, Dict, Any
 
 import numpy as np
+import pandas as pd
 import torch
 
-from phrasely.clustering.hdbscan_clusterer import HDBSCANClusterer
 from phrasely.embeddings.phrase_embedder import PhraseEmbedder
-from phrasely.medoids.medoid_selector import MedoidSelector
-from phrasely.pipeline_result import PipelineResult
 from phrasely.reduction.svd_reducer import SVDReducer
 from phrasely.reduction.two_stage_reducer import TwoStageReducer
+from phrasely.clustering.hdbscan_clusterer import HDBSCANClusterer
+from phrasely.medoids.medoid_selector import MedoidSelector
+from phrasely.pipeline_result import PipelineResult
 from phrasely.utils.gpu_utils import get_device_info
 
 logger = logging.getLogger(__name__)
 
 
+# -------------------------------------------------------------
 @contextmanager
 def catch_time(label: str):
-    """Context manager for timing."""
-    logger.info("▶️  %s...", label)
+    logger.info(f"▶️  {label}...")
     start = perf_counter()
-    try:
-        yield
-    finally:
-        elapsed = perf_counter() - start
-        logger.info("%s completed in %.3fs.", label, elapsed)
+    yield
+    elapsed = perf_counter() - start
+    logger.info(f"{label} completed in {elapsed:.3f}s.")
 
 
-def _free_gpu() -> None:
-    """Free PyTorch GPU memory."""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()
-        logger.info("🧹 Freed GPU memory.")
+# -------------------------------------------------------------
+def _estimate_gpu_limits(vram_gb: float) -> int:
+    """
+    Estimate safe max rows for SVD + HDBSCAN on GPU.
+
+    Empirically calibrated on:
+      • 4 GB GPU → ~100k rows
+      • 14.6 GB GPU → ~750k rows
+    """
+    if vram_gb <= 0:
+        return 200_000  # safe CPU fallback
+
+    limit = int(vram_gb * 52_000)
+    return max(200_000, min(limit, 1_200_000))  # clamp
 
 
+# -------------------------------------------------------------
 def run_pipeline(
+    loader_cls,
+    loader_kwargs: Optional[Dict[str, Any]] = None,
     *,
-    loader_cls: Any,
-    loader_kwargs: Dict[str, Any],
-    n_components: int = 100,
-    reducer: str = "svd",
+    reducer: str = "svd",                # "svd" or "two_stage"
+    reducer_params: Optional[dict] = None,
     use_gpu: bool = True,
     min_cluster_size: int = 15,
-    min_samples: int | None = None,
+    min_samples: Optional[int] = None,
     stream: bool = False,
-) -> PipelineResult:
+):
     """
-    Main end-to-end pipeline:
-    load → embed → reduce → cluster → medoids.
+    Full pipeline: load → embed → reduce → cluster → medoids.
     """
+
+    loader_kwargs = loader_kwargs or {}
+    reducer_params = reducer_params or {}
+
     logger.info("🚀 Starting Phrasely pipeline...")
 
-    # ---------- GPU limits ----------
+    # GPU limits
     vram_gb = get_device_info().get("total", 0.0)
-    logger.info("Detected GPU VRAM: %.1f GB", vram_gb)
-
-    max_rows_gpu = int(730_000 * max(1.0, vram_gb / 14.0))
-    max_rows_gpu = min(max_rows_gpu, 1_500_000)
+    max_gpu_rows = _estimate_gpu_limits(vram_gb)
 
     logger.info(
-        "Adaptive GPU limits — SVD ≤ %s rows, HDBSCAN ≤ %s rows.",
-        f"{max_rows_gpu:,}",
-        f"{max_rows_gpu:,}",
+        f"Adaptive GPU limits — SVD ≤ {max_gpu_rows:,} rows, "
+        f"HDBSCAN ≤ {max_gpu_rows:,} rows."
     )
 
-    # ---------- Stage 1: Loading & embedding ----------
+    # ================
+    # Stage 1: Load + Embed
+    # ================
     with catch_time("Loading and embedding phrases"):
         loader = loader_cls(**loader_kwargs)
 
+        phrases: List[str] = []
+        emb_batches: List[np.ndarray] = []
+
+        embedder = PhraseEmbedder()
+        embedder.device = "cuda" if use_gpu else "cpu"
+
         if stream:
-            phrases: List[str] = []
-            emb_batches: List[np.ndarray] = []
-
-            embedder = PhraseEmbedder()
-            embedder.device = "cuda" if use_gpu else "cpu"
-
+            count = 0
             for i, df in enumerate(loader.stream_load(), 1):
-                batch_ph = df["phrase"].tolist()
-                batch_emb = embedder.embed(batch_ph)
+                batch_phrases = df["phrase"].tolist()
+                batch_embeddings = embedder.embed(batch_phrases)
 
-                if batch_emb.shape[0] != len(batch_ph):
-                    n = min(batch_emb.shape[0], len(batch_ph))
-                    batch_ph = batch_ph[:n]
-                    batch_emb = batch_emb[:n]
+                # alignment fix
+                if batch_embeddings.shape[0] != len(batch_phrases):
+                    n = min(batch_embeddings.shape[0], len(batch_phrases))
+                    batch_phrases = batch_phrases[:n]
+                    batch_embeddings = batch_embeddings[:n]
 
-                phrases.extend(batch_ph)
-                emb_batches.append(batch_emb)
+                phrases.extend(batch_phrases)
+                emb_batches.append(batch_embeddings)
+                count += batch_embeddings.shape[0]
 
-                logger.info(
-                    "Streamed batch %d: +%s phrases",
-                    i,
-                    f"{len(batch_ph):,}",
-                )
-
-                if hasattr(loader, "max_phrases"):
-                    mp = getattr(loader, "max_phrases")
-                    if mp and len(phrases) >= mp:
-                        logger.info("Reached max_phrases=%s — stopping.", mp)
-                        break
-
-            embeddings = np.vstack(emb_batches)
-            del emb_batches, embedder
+                if loader.max_phrases and count >= loader.max_phrases:
+                    logger.info(f"Reached max_phrases={loader.max_phrases} — stopping.")
+                    break
 
         else:
             df = loader.load()
             phrases = df["phrase"].tolist()
-
-            embedder = PhraseEmbedder()
-            embedder.device = "cuda" if use_gpu else "cpu"
-
             embeddings = embedder.embed(phrases)
-            del embedder
+            emb_batches = [embeddings]
 
-        _free_gpu()
+        embeddings = np.vstack(emb_batches)
 
-    if len(phrases) != embeddings.shape[0]:
-        raise ValueError("Mismatch: phrases vs embeddings count.")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+            logger.info("🧹 Freed GPU memory.")
 
-    # ---------- Stage 2: Reduction ----------
+    # ================
+    # Stage 2: Reduce
+    # ================
     with catch_time("Reducing dimensions"):
-        reducer_obj: SVDReducer | TwoStageReducer
 
-        if reducer == "two_stage":
-            reducer_obj = TwoStageReducer(
-                svd_components=n_components,
-                umap_components=15,
+        if reducer == "svd":
+            red = SVDReducer(
+                n_components=reducer_params.get("n_components", 100),
+                use_gpu=use_gpu,
+            )
+        elif reducer == "two_stage":
+            red = TwoStageReducer(
+                svd_components=reducer_params.get("svd_components", 100),
+                umap_components=reducer_params.get("umap_components", 15),
+                n_neighbors=reducer_params.get("n_neighbors", 15),
+                min_dist=reducer_params.get("min_dist", 0.1),
+                metric=reducer_params.get("metric", "cosine"),
                 use_gpu=use_gpu,
             )
         else:
-            reducer_obj = SVDReducer(
-                n_components=n_components,
-                use_gpu=use_gpu,
-            )
+            raise ValueError(f"Unknown reducer: {reducer}")
 
-        reduced = reducer_obj.reduce(embeddings)
-        orig_dim = embeddings.shape[1]
-        del embeddings
-        _free_gpu()
+        reduced = red.reduce(embeddings)
 
-    # ---------- Stage 3: Clustering ----------
-    if reduced.shape[0] > max_rows_gpu:
-        logger.info(
-            "Too many rows (%s) for GPU → switching to CPU.",
-            f"{reduced.shape[0]:,}",
-        )
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+
+    # ================
+    # Stage 3: Cluster
+    # ================
+    if reduced.shape[0] > max_gpu_rows:
+        logger.info("Too many rows for GPU clustering → using CPU.")
         use_gpu = False
 
     with catch_time("Clustering phrases"):
@@ -159,26 +162,22 @@ def run_pipeline(
             min_samples=min_samples,
         )
         labels = clusterer.cluster(reduced)
-        del clusterer
-        _free_gpu()
 
-    if reduced.shape[0] != labels.shape[0]:
-        raise ValueError("Mismatch: reduced vs labels length.")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
 
-    # ---------- Stage 4: Medoids ----------
+    # ================
+    # Stage 4: Medoids
+    # ================
     with catch_time("Selecting medoids"):
         selector = MedoidSelector(return_indices=True)
-        medoid_indices, medoid_phrases = selector.select(
-            phrases,
-            reduced,
-            labels,
-        )
+        medoid_indices, medoid_phrases = selector.select(phrases, reduced, labels)
 
+    # Final
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     logger.info(
-        "✅ Pipeline complete: %s clusters, %s medoids.",
-        n_clusters,
-        len(medoid_phrases),
+        f"✅ Pipeline complete: {n_clusters} clusters, {len(medoid_phrases)} medoids."
     )
 
     return PipelineResult(
@@ -188,5 +187,5 @@ def run_pipeline(
         medoids=medoid_phrases,
         medoid_indices=medoid_indices,
         embeddings=None,
-        orig_dim=orig_dim,
+        orig_dim=embeddings.shape[1],
     )
