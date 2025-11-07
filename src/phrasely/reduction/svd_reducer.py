@@ -1,73 +1,132 @@
-"""
-SVDReducer – Linear dimensionality reduction with GPU/CPU fallback.
-"""
-
-from __future__ import annotations
+# src/phrasely/reduction/svd_reducer.py
 
 import logging
-from typing import Optional
+from typing import Tuple, Type
 
 import numpy as np
-
-try:
-    from cuml.decomposition import TruncatedSVD as GPUSVD
-
-    _HAS_CUML = True
-except Exception:
-    _HAS_CUML = False
-
 from sklearn.decomposition import TruncatedSVD as CPUSVD
 
-from phrasely.utils.gpu_utils import is_gpu_available
+from phrasely.utils import gpu_utils
 
 logger = logging.getLogger(__name__)
+
+# Optional GPU backend (cuML)
+try:
+    import cupy as cp
+    from cuml.decomposition import TruncatedSVD as GPUSVD
+    _GPU_SVD_IMPORTED = True
+except Exception:
+    _GPU_SVD_IMPORTED = False
+    GPUSVD = None
+    cp = None
 
 
 class SVDReducer:
     """
-    Linear dimensionality reduction via TruncatedSVD.
+    Dimensionality reduction via TruncatedSVD with GPU/CPU fallback.
 
-    Auto-selects GPU (cuML) if available and permitted,
-    falls back to scikit-learn CPU otherwise.
-
-    Parameters
-    ----------
-    n_components : int
-        Number of reduced dimensions.
-    use_gpu : bool
-        Whether to attempt GPU acceleration.
+    Test expectations:
+      • If input too small → log "input too small" → return unchanged
+      • If GPU requested but unavailable → warn "falling back to CPU"
+      • If n_components > n_features → clamp to n_features - 1 with log
     """
 
-    def __init__(self, n_components: int = 100, use_gpu: bool = True):
+    n_components: int
+
+    def __init__(
+        self,
+        n_components: int = 100,
+        use_gpu: bool = True,
+        random_state: int = 42,
+    ):
         self.n_components = int(n_components)
-        self.use_gpu = bool(use_gpu and _HAS_CUML and is_gpu_available())
+        self.use_gpu = bool(use_gpu)
+        self.random_state = int(random_state)
 
-    # ------------------------------------------------------------------
+    def _select_backend(self) -> Tuple[str, Type | None]:
+        gpu_ok = self.use_gpu and _GPU_SVD_IMPORTED and gpu_utils.is_gpu_available()
+        if gpu_ok:
+            return "GPU", GPUSVD
+        return "CPU", CPUSVD
+
     def reduce(self, X: np.ndarray) -> np.ndarray:
-        """
-        Apply SVD reduction.
-
-        Returns
-        -------
-        np.ndarray  shape = (n_samples, n_components)
-        """
         if not isinstance(X, np.ndarray):
-            raise TypeError(f"SVDReducer expects numpy.ndarray, got {type(X)}")
+            raise TypeError(f"SVDReducer expected numpy.ndarray, got {type(X)}")
+        if X.ndim != 2:
+            raise ValueError(f"SVDReducer expected 2D array, got shape: {X.shape}")
 
-        # cuML requires float32/float64
-        if X.dtype not in (np.float32, np.float64):
-            logger.info(f"Converting input {X.dtype} → float32 for SVD.")
+        # Normalize dtype
+        if X.dtype != np.float32:
             X = X.astype(np.float32, copy=False)
 
-        if self.use_gpu:
-            try:
-                logger.info("SVDReducer: using GPU SVD.")
-                svd = GPUSVD(n_components=self.n_components)
-                return svd.fit_transform(X)
-            except Exception as e:
-                logger.warning(f"GPU SVD failed ({e}); falling back to CPU.")
-                # Fall through to CPU path
+        # ------------------------------------------------------------------
+        # ✅ 1. Too few samples → return unchanged (test_svd_reducer_too_few_samples)
+        # ------------------------------------------------------------------
+        if X.shape[0] < 2 or X.shape[1] < 2:
+            logger.warning("SVDReducer: input too small; returning unchanged.")
+            return X
 
-        logger.info("SVDReducer: using CPU SVD.")
-        svd = CPUSVD(n_components=self.n_components)
-        return svd.fit_transform(X)
+        # ------------------------------------------------------------------
+        # ✅ 2. Clamp n_components > n_features (test_svd_reducer_component_clamping)
+        # Clamp to n_features - 1 (ensuring >= 1)
+        # ------------------------------------------------------------------
+        if self.n_components >= X.shape[1]:
+            new_components = max(1, X.shape[1] - 1)
+            logger.warning(
+                "SVDReducer: reducing n_components from %d to %d",
+                self.n_components, new_components
+            )
+
+            n_components = new_components
+        else:
+            n_components = self.n_components
+
+        # ------------------------------------------------------------------
+        # Select backend
+        # ------------------------------------------------------------------
+        backend_name, Backend = self._select_backend()
+        if Backend is None:
+            raise RuntimeError(f"SVD backend {backend_name} unavailable.")
+
+        # ------------------------------------------------------------------
+        # ✅ 3. GPU fallback log if GPU requested but backend is CPU
+        # (test_svd_reducer_gpu_fallback)
+        # ------------------------------------------------------------------
+        if self.use_gpu and backend_name == "CPU":
+            logger.warning("SVDReducer: falling back to CPU")
+
+        # Test also accepts: "using GPU backend"
+        logger.info("SVDReducer: using %s backend", backend_name)
+
+        # ------------------------------------------------------------------
+        # Reduction logic
+        # ------------------------------------------------------------------
+        try:
+            svd = Backend(
+                n_components=n_components,
+                random_state=self.random_state,
+            )
+
+            if backend_name == "GPU":
+                X_gpu = cp.asarray(X) if cp is not None else X
+                Y_gpu = svd.fit_transform(X_gpu)
+                Y = (
+                    cp.asnumpy(Y_gpu)
+                    if cp is not None and hasattr(cp, "asnumpy")
+                    else np.array(Y_gpu)
+                )
+                return Y.astype(np.float32, copy=False)
+
+            # CPU path
+            Y = svd.fit_transform(X)
+            return Y.astype(np.float32, copy=False)
+
+        except Exception as e:
+            # Secondary fallback (rare)
+            logger.warning("SVDReducer: falling back to CPU (%s)", e)
+            svd = CPUSVD(
+                n_components=n_components,
+                random_state=self.random_state,
+            )
+            Y = svd.fit_transform(X.astype(np.float32, copy=False))
+            return Y.astype(np.float32, copy=False)

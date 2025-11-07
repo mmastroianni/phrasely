@@ -29,9 +29,7 @@ class ClusterVisualizer:
         """Show histogram of cluster sizes."""
         labels = np.asarray(result.labels)
         unique, counts = np.unique(labels, return_counts=True)
-        df = pd.DataFrame({"label": unique, "size": counts}).sort_values(
-            "size", ascending=False
-        )
+        df = pd.DataFrame({"label": unique, "size": counts}).sort_values("size", ascending=False)
 
         plt.figure(figsize=self.figsize)
         plt.hist(df["size"], bins=bins, color="steelblue", edgecolor="white")

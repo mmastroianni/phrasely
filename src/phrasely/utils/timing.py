@@ -14,7 +14,5 @@ def catch_time(task_name: str = "operation"):
         logger.info(f"{task_name} completed in {duration:.2f}s")
     except Exception as e:
         duration = time.time() - start
-        logger.error(
-            f"{task_name} failed after {duration:.2f}s: {e}"
-        )  # ✅ explicit message
+        logger.error(f"{task_name} failed after {duration:.2f}s: {e}")  # ✅ explicit message
         raise

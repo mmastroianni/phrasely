@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=67", "wheel"]
 build-backend = "setuptools.build_meta"
 
 
@@ -14,38 +14,120 @@ authors = [
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
+
+# Core dependencies (CPU-safe; GPU-only deps go under optional)
 dependencies = [
-"numpy",
-"pandas",
-"scikit-learn",
-"hdbscan",
-"sentence-transformers",
-"tqdm",
-"psutil",
-"pyyaml",
-"joblib"
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "hdbscan",
+    "sentence-transformers",
+    "pyarrow",
+    "tqdm",
+    "psutil",
+    "pyyaml",
+    "joblib",
+    "boto3",
+    "umap-learn",             # CPU fallback for UMAP
 ]
 
-
 [project.optional-dependencies]
-dev = ["pytest", "flake8", "black", "mypy", "jupyterlab", "types-requests", "isort"]
-gpu = ["cuml>=24.06", "cudf>=24.06", "cupy-cuda12x"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "flake8",
+    "flake8-docstrings",
+    "flake8-import-order",
+    "black",
+    "mypy",
+    "isort",
+    "types-requests",
+    "jupyterlab",
+]
+
+gpu = [
+    "cupy-cuda12x",
+    "cuml-cu12",
+    "cudf-cu12"
+]
 
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+
+# ------------------------------------------------------------
+# Formatting: Black + isort (aligned with .flake8 max-line=99)
+# ------------------------------------------------------------
+
 [tool.black]
-line-length=88
+line-length = 99
+target-version = ["py310"]
+skip-string-normalization = false
+include = "src|tests"
 
 [tool.isort]
 profile = "black"
-line_length = 88
+line_length = 99
 src_paths = ["src", "tests"]
 known_first_party = ["phrasely"]
 combine_as_imports = true
 
-[tool.flake8]
-max-line-length=88
-extend-ignore = "E203, W503"
 
+# ------------------------------------------------------------
+# Flake8 (you can delete .flake8 and put it here if you prefer)
+# ------------------------------------------------------------
+
+[tool.flake8]
+max-line-length = 99
+extend-ignore = [
+    "E203",
+    "W503"
+]
+
+
+# ------------------------------------------------------------
+# pytest (optional but tidy)
+# ------------------------------------------------------------
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+
+# ------------------------------------------------------------
+# mypy (if you want, we can fold mypy.ini into here)
+# ------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "silent"
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "src"
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_no_return = true
+
+[[tool.mypy.overrides]]
+module = [
+    "cuml.*",
+    "cupy.*",
+    "cudf.*",
+    "umap.*",
+    "sentence_transformers.*",
+    "pyarrow.*",
+    "boto3.*",
+    "botocore.*",
+    "numpy.*",
+    "pandas.*",
+    "sklearn.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true

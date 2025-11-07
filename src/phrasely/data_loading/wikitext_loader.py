@@ -41,9 +41,7 @@ class WikitextLoader(BaseLoader):
             return
 
         logger.info("Streaming Wikitext-103 dataset from Hugging Face...")
-        ds = load_dataset(
-            "wikitext", "wikitext-103-raw-v1", split="train", streaming=True
-        )
+        ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 
         phrases = []
         progress = tqdm(total=self.max_phrases, desc="Collecting phrases", ncols=90)

@@ -1,4 +1,5 @@
 from typing import Protocol
+
 import numpy as np
 
 
@@ -17,5 +18,4 @@ class ReducerProtocol(Protocol):
 
     n_components: int
 
-    def reduce(self, X: np.ndarray) -> np.ndarray:
-        ...
+    def reduce(self, X: np.ndarray) -> np.ndarray: ...

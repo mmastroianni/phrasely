@@ -1,43 +1,52 @@
 import logging
-from typing import List, Sequence
+from typing import List, Sequence, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Try to import CuPy for GPU acceleration
 try:
     import cupy as cp  # type: ignore
 
-    _CUPY_AVAILABLE = True
+    _HAS_CUPY = True
 except Exception:
     cp = None  # type: ignore
-    _CUPY_AVAILABLE = False
+    _HAS_CUPY = False
 
 
 class MedoidSelector:
     """
-    Selects representative medoids for each cluster.
+    Robust medoid selector supporting both exact and approximate computation.
 
-    For clusters with size <= exact_threshold, computes the *true medoid*:
-      argmin_i sum_j distance(x_i, x_j).
+    Behavior:
+    ---------
+    • For clusters with <= exact_threshold points:
+        Computes *exact* medoid via chunked pairwise distances.
+        O(n²) work but chunked to avoid RAM spikes.
 
-    For larger clusters, approximates by choosing the point nearest
-    to the cluster centroid
-    (cosine: nearest to normalized mean vector; euclidean: nearest to mean).
+    • For clusters > exact_threshold:
+        Uses *centroid-approximation medoid*
+        (nearest point to centroid in cosine or euclidean space).
+
+    GPU Support:
+    ------------
+    • If prefer_gpu=True and CuPy available, distance math uses GPU.
+    • Otherwise CPU NumPy.
 
     Parameters
     ----------
     metric : {"cosine", "euclidean"}
-        Distance metric for medoid selection. Default "cosine".
+        Distance metric.
     exact_threshold : int
-        Max cluster size to compute exact medoid (O(n^2) time, chunked memory).
-        Default 1500.
+        Max cluster size for exact medoid computation.
     chunk_size : int
-        Row-block size for chunked pairwise computations. Default 2048.
+        Partition size for chunked pairwise ops.
     prefer_gpu : bool
-        If True and CuPy is available, use GPU arrays/ops for heavy math.
+        If True and CuPy available, use GPU for pairwise ops.
     return_indices : bool
-        If True, also return medoid indices into the original `phrases`/`embeddings`.
+        If True → return (indices, phrases)
+        Else → return phrases only.
     """
 
     def __init__(
@@ -51,98 +60,83 @@ class MedoidSelector:
         metric = metric.lower()
         if metric not in {"cosine", "euclidean"}:
             raise ValueError("metric must be 'cosine' or 'euclidean'")
+
         self.metric = metric
         self.exact_threshold = int(exact_threshold)
         self.chunk_size = int(chunk_size)
         self.prefer_gpu = bool(prefer_gpu)
         self.return_indices = bool(return_indices)
 
-    # ----------------------- public API -----------------------
-
+    # ------------------------------------------------------------------
     def select(
         self,
         phrases: Sequence[str],
         embeddings: np.ndarray,
         labels: np.ndarray,
-    ):
-        """Select representative medoids for each cluster."""
+    ) -> Tuple[List[str], List[int]] | List[str]:
+        """
+        Select medoids for each cluster (excluding noise).
+        """
         if embeddings.ndim != 2:
-            raise ValueError("embeddings must be 2D array (N, D)")
+            raise ValueError("embeddings must be 2D (N, D)")
+
         if embeddings.shape[0] != len(phrases) or labels.shape[0] != len(phrases):
-            raise ValueError("length mismatch among phrases/embeddings/labels")
+            raise ValueError("Length mismatch in medoid selection inputs")
 
-        unique = sorted(int(x) for x in np.unique(labels) if x != -1)
-        medoid_phrases: List[str] = []
+        unique_labels = sorted(int(x) for x in np.unique(labels) if x != -1)
+
         medoid_indices: List[int] = []
+        medoid_phrases: List[str] = []
 
-        for lbl in unique:
+        for lbl in unique_labels:
             idx = np.where(labels == lbl)[0]
             if len(idx) == 0:
                 continue
+
             cluster_emb = embeddings[idx]
-            medoid_local = self._cluster_medoid_index(cluster_emb)
-            medoid_global = int(idx[medoid_local])
-            medoid_indices.append(medoid_global)
-            medoid_phrases.append(phrases[medoid_global])
+            local_idx = self._cluster_medoid_index(cluster_emb)
+            global_idx = int(idx[local_idx])
+
+            medoid_indices.append(global_idx)
+            medoid_phrases.append(phrases[global_idx])
 
         logger.info(
-            f"Selected {len(medoid_phrases)} medoids across {len(unique)} clusters."
+            "Selected %d medoids across %d clusters.",
+            len(medoid_phrases),
+            len(unique_labels),
         )
 
-        # ✅ Return only phrases unless explicitly asked for indices
         if self.return_indices:
             return medoid_phrases, medoid_indices
-        else:
-            return medoid_phrases
+        return medoid_phrases
 
-    # ----------------------- internals -----------------------
-
+    # ------------------------------------------------------------------
     def _cluster_medoid_index(self, X: np.ndarray) -> int:
+        """
+        Compute medoid index for a single cluster's embedding matrix (n, d).
+        """
         n = X.shape[0]
-        use_gpu = _CUPY_AVAILABLE and self.prefer_gpu and (n >= 512)
 
-        xp = cp if (use_gpu and _CUPY_AVAILABLE) else np
+        # GPU decision
+        use_gpu = bool(self.prefer_gpu and _HAS_CUPY and n >= 512)
+        xp = cp if use_gpu else np
         Xp = xp.asarray(X)
 
+        # Cosine normalization
         if self.metric == "cosine":
             Xp = self._normalize_rows(Xp, xp)
 
+        # --------------------------------------------------------------
+        #   Small cluster → exact medoid via chunked pairwise distances
+        # --------------------------------------------------------------
         if n <= self.exact_threshold:
-            if self.metric == "cosine":
-                best_i, best_val = -1, xp.inf
-                for start in range(0, n, self.chunk_size):
-                    stop = min(start + self.chunk_size, n)
-                    dots = Xp[start:stop] @ Xp.T
-                    row_sums = n - xp.sum(dots, axis=1)
-                    mins_idx = xp.argmin(row_sums)
-                    mins_val = row_sums[mins_idx]
-                    candidate_i = int(start + int(mins_idx))
-                    if mins_val < best_val:
-                        best_val = float(mins_val)
-                        best_i = candidate_i
-                return int(best_i)
-            else:
-                norms = xp.sum(Xp * Xp, axis=1)
-                total_norm_sum = xp.sum(norms)
-                best_i, best_val = -1, xp.inf
-                for start in range(0, n, self.chunk_size):
-                    stop = min(start + self.chunk_size, n)
-                    block = Xp[start:stop]
-                    block_norms = xp.sum(block * block, axis=1)
-                    dots = block @ Xp.T
-                    row_sums_sq = (
-                        n * block_norms + total_norm_sum - 2.0 * xp.sum(dots, axis=1)
-                    )
-                    mins_idx = xp.argmin(row_sums_sq)
-                    mins_val = row_sums_sq[mins_idx]
-                    candidate_i = int(start + int(mins_idx))
-                    if mins_val < best_val:
-                        best_val = float(mins_val)
-                        best_i = candidate_i
-                return int(best_i)
+            return self._exact_medoid(Xp, xp)
 
-        # Approximate for large clusters: nearest to centroid
+        # --------------------------------------------------------------
+        #   Large cluster → approximate medoid (centroid strategy)
+        # --------------------------------------------------------------
         centroid = xp.mean(Xp, axis=0, keepdims=True)
+
         if self.metric == "cosine":
             centroid = self._normalize_rows(centroid, xp)
             sims = (Xp @ centroid.T).ravel()
@@ -152,10 +146,68 @@ class MedoidSelector:
             d2 = xp.sum(diffs * diffs, axis=1)
             idx = int(xp.argmin(d2))
 
-        return int(idx)
+        return idx
 
+    # ------------------------------------------------------------------
+    def _exact_medoid(self, Xp, xp) -> int:
+        """
+        Compute exact medoid:
+            argmin_i Σ_j distance(X[i], X[j])
+        using chunked blocks to preserve memory.
+
+        Supports cosine and euclidean.
+        """
+        n = Xp.shape[0]
+        chunk = self.chunk_size
+
+        best_i = -1
+        best_val = float("inf")
+
+        if self.metric == "cosine":
+            # Pre-normalized → cosine distance = 1 - dot
+            for start in range(0, n, chunk):
+                end = min(start + chunk, n)
+                dots = Xp[start:end] @ Xp.T  # shape (block, n)
+                # cosine distance sum = Σ (1 - dot)
+                row_sums = n - xp.sum(dots, axis=1)  # smaller = better
+
+                local_idx = int(xp.argmin(row_sums))
+                val = float(row_sums[local_idx])
+
+                candidate = start + local_idx
+                if val < best_val:
+                    best_val = val
+                    best_i = candidate
+
+            return best_i
+
+        else:
+            # Euclidean: d(i,j)^2 = ||Xi||^2 + ||Xj||^2 - 2 <Xi, Xj>
+            norms = xp.sum(Xp * Xp, axis=1)
+            total_norms = xp.sum(norms)
+
+            for start in range(0, n, chunk):
+                end = min(start + chunk, n)
+                block = Xp[start:end]
+                block_norms = xp.sum(block * block, axis=1)
+
+                dots = block @ Xp.T
+                # sum of squared distances for each row
+                row_sums_sq = n * block_norms + total_norms - 2.0 * xp.sum(dots, axis=1)
+
+                local_idx = int(xp.argmin(row_sums_sq))
+                val = float(row_sums_sq[local_idx])
+
+                candidate = start + local_idx
+                if val < best_val:
+                    best_val = val
+                    best_i = candidate
+
+            return best_i
+
+    # ------------------------------------------------------------------
     @staticmethod
-    def _normalize_rows(X, xp_module):
-        norms = xp_module.linalg.norm(X, axis=1, keepdims=True)
-        norms = xp_module.where(norms == 0, 1.0, norms)
+    def _normalize_rows(X, xp):
+        norms = xp.linalg.norm(X, axis=1, keepdims=True)
+        norms = xp.where(norms == 0, 1.0, norms)
         return X / norms

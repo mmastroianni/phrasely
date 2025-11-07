@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass
@@ -11,23 +13,41 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PipelineResult:
+    """
+    Structured output of the full Phrasely clustering pipeline.
+
+    Contains:
+      • phrases – original text
+      • reduced – reduced embeddings (SVD or UMAP)
+      • labels – cluster labels
+      • medoids – medoid phrases
+      • medoid_indices – index positions of medoids
+      • embeddings – optional original embeddings (usually None)
+      • orig_dim – original embedding dimensionality
+    """
+
     phrases: List[str]
     reduced: np.ndarray
     labels: np.ndarray
     medoids: List[str]
     medoid_indices: Optional[List[int]] = None
     embeddings: Optional[np.ndarray] = None
-    orig_dim: Optional[int] = None  # ✅ store original embedding dimension
+    orig_dim: Optional[int] = None
 
-    # -------------------- Summary --------------------
-    def summary(self):
+    # ----------------------------------------------------------------------
+    # SUMMARY
+    # ----------------------------------------------------------------------
+    def summary(self) -> dict:
+        """Return a JSON-serializable summary of the pipeline output."""
         n_clusters = len(set(self.labels)) - (1 if -1 in self.labels else 0)
+
         emb_dim = (
-            self.embeddings.shape[1]
+            int(self.embeddings.shape[1])
             if isinstance(self.embeddings, np.ndarray)
-            else (self.orig_dim or 0)
+            else int(self.orig_dim or 0)
         )
-        red_dim = self.reduced.shape[1] if isinstance(self.reduced, np.ndarray) else 0
+        red_dim = int(self.reduced.shape[1]) if isinstance(self.reduced, np.ndarray) else 0
+
         return {
             "n_phrases": len(self.phrases),
             "n_clusters": n_clusters,
@@ -36,11 +56,17 @@ class PipelineResult:
             "reduced_dim": red_dim,
         }
 
-    # -------------------- Save --------------------
-    def save(self, path: str | Path):
-        """Save pipeline result to compressed .npz and metadata JSON."""
+    # ----------------------------------------------------------------------
+    # SAVE
+    # ----------------------------------------------------------------------
+    def save(self, path: str | Path) -> None:
+        """
+        Save the PipelineResult to:
+          • <path>.npz      – compressed array data
+          • <path>_meta.json – summary & metadata
+        """
         path = Path(path)
-        base = path.with_suffix("")  # strip any extension
+        base = path.with_suffix("")  # strip extension
 
         logger.info(f"Saving PipelineResult to {base}.npz and {base}_meta.json")
 
@@ -54,18 +80,25 @@ class PipelineResult:
         )
 
         meta = self.summary()
-        meta["orig_dim"] = self.orig_dim  # ✅ include in JSON metadata
+        meta["orig_dim"] = self.orig_dim
 
         with open(f"{base}_meta.json", "w") as f:
             json.dump(meta, f, indent=2)
 
-    # -------------------- Load --------------------
-    # -------------------- Load --------------------
+    # ----------------------------------------------------------------------
+    # LOAD
+    # ----------------------------------------------------------------------
     @staticmethod
     def load(path: str | Path) -> "PipelineResult":
-        """Load a saved PipelineResult from disk."""
+        """
+        Load a PipelineResult previously saved via .save().
+        Automatically loads:
+          • <path>.npz
+          • <path>_meta.json (if available)
+        """
         path = Path(path)
-        base = path.with_suffix("")  # strip extension
+        base = path.with_suffix("")
+
         logger.info(f"Loading PipelineResult from {base}.npz")
 
         with np.load(f"{base}.npz", allow_pickle=True) as data:
@@ -74,12 +107,14 @@ class PipelineResult:
             labels = data["labels"]
             medoids = data["medoids"].tolist()
             medoid_indices = (
-                data["medoid_indices"].tolist() if "medoid_indices" in data else None
+                data["medoid_indices"].tolist()
+                if "median_indices" in data or "medoid_indices" in data
+                else None
             )
 
-        # Load metadata JSON
-        meta_path = f"{base}_meta.json"
+        # Load metadata JSON if present
         orig_dim = None
+        meta_path = f"{base}_meta.json"
         if Path(meta_path).exists():
             with open(meta_path, "r") as f:
                 meta = json.load(f)
@@ -93,4 +128,17 @@ class PipelineResult:
             medoid_indices=medoid_indices,
             embeddings=None,
             orig_dim=orig_dim,
+        )
+
+    # ----------------------------------------------------------------------
+    # Pretty repr
+    # ----------------------------------------------------------------------
+    def __repr__(self) -> str:
+        s = self.summary()
+        return (
+            f"PipelineResult(phrases={s['n_phrases']:,}, "
+            f"clusters={s['n_clusters']:,}, "
+            f"medoids={s['n_medoids']:,}, "
+            f"embedding_dim={s['embedding_dim']}, "
+            f"reduced_dim={s['reduced_dim']})"
         )

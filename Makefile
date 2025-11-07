@@ -2,7 +2,7 @@
 # Makefile for Phrasely – GPU-default local dev, CPU-safe CI
 # ============================================================
 
-.PHONY: install install-cpu test lint format clean release changelog ci help
+.PHONY: install install-cpu test lint format clean release changelog ci help strip-notebooks lint-fix
 
 # ------------------------------------------------------------
 # Help
@@ -17,8 +17,9 @@ help:
 	@echo " test            → Run unit tests with pytest"
 	@echo " lint            → Run flake8 + mypy checks"
 	@echo " format          → Format code with black + isort"
+	@echo " lint-fix        → Auto-fix lint issues (format only)"
 	@echo " clean           → Remove build/test caches"
-	@echo " ci              → Run local CI-style (CPU-only) checks"
+	@echo " ci              → Local CI simulation (CPU-only)"
 	@echo " release         → Create a tagged version and update CHANGELOG"
 	@echo " changelog       → Preview next CHANGELOG entry (no commit)"
 	@echo " help            → Show this help message"
@@ -41,6 +42,10 @@ test:
 	@echo "🧪 Running pytest..."
 	pytest -v --disable-warnings
 
+# ------------------------------------------------------------
+# Linting and Formatting
+# ------------------------------------------------------------
+
 lint:
 	@echo "🔍 Running flake8 + mypy..."
 	flake8 --config .flake8 src/phrasely tests
@@ -48,8 +53,12 @@ lint:
 
 format:
 	@echo "🪄 Formatting with Black + isort..."
-	black src tests
 	isort src tests
+	black src tests
+
+# A helper target for “fix problems then lint”
+lint-fix: format
+	@echo "✨ Re-formatting done. Now run: make lint"
 
 strip-notebooks:
 	find notebooks -name '*.ipynb' -exec nbstripout {} \;

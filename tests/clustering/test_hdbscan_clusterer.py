@@ -69,9 +69,7 @@ def test_gpu_available_and_used(monkeypatch, small_data):
     monkeypatch.setattr("phrasely.clustering.hdbscan_clusterer.GPUHDBSCAN", fake_gpu)
     monkeypatch.setattr("phrasely.clustering.hdbscan_clusterer.GPU_IMPORTED", True)
     # ✅ Patch inside the same module namespace so it affects the imported reference
-    monkeypatch.setattr(
-        "phrasely.clustering.hdbscan_clusterer.is_gpu_available", lambda: True
-    )
+    monkeypatch.setattr("phrasely.clustering.hdbscan_clusterer.is_gpu_available", lambda: True)
 
     clusterer = HDBSCANClusterer(use_gpu=True)
     assert clusterer.use_gpu, "GPU path should be activated"

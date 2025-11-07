@@ -1,34 +1,34 @@
+# src/phrasely/reduction/two_stage_reducer.py
+
 import logging
-from typing import Any
+from typing import Tuple, Type
 
 import numpy as np
 
-try:
-    from cuml.decomposition import TruncatedSVD as GPUSVD
-    from cuml.manifold import UMAP as GPUUMAP
-
-    _HAS_CUML = True
-except Exception:
-    _HAS_CUML = False
-
-from sklearn.decomposition import TruncatedSVD as CPUSVD
-from umap import UMAP as CPUUMAP
-
-from phrasely.utils.gpu_utils import get_device_info
-from phrasely.reduction.reducer_protocol import ReducerProtocol
+from phrasely.reduction.svd_reducer import SVDReducer
+from phrasely.utils import gpu_utils
 
 logger = logging.getLogger(__name__)
 
+try:
+    import cupy as cp
+    from cuml.manifold import UMAP as GPUUMAP
 
-class TwoStageReducer(ReducerProtocol):
-    """
-    Two-stage dimensionality reducer:
-        1. Linear reduction via TruncatedSVD
-        2. Non-linear reduction via UMAP
+    _GPU_UMAP_IMPORTED = True
+except Exception:
+    _GPU_UMAP_IMPORTED = False
+    GPUUMAP = None
+    cp = None
 
-    Works on GPU (cuML) when available, falls back to CPU otherwise.
-    """
+try:
+    import umap
 
+    CPUUMAP = umap.UMAP
+except Exception:
+    CPUUMAP = None
+
+
+class TwoStageReducer:
     def __init__(
         self,
         svd_components: int = 100,
@@ -37,120 +37,100 @@ class TwoStageReducer(ReducerProtocol):
         n_neighbors: int = 15,
         min_dist: float = 0.1,
         metric: str = "cosine",
-        **kwargs: Any,
+        random_state: int = 42,
     ):
-        self.svd_components = svd_components
-        self.umap_components = umap_components
-        self.use_gpu = bool(use_gpu and _HAS_CUML)
-        self.n_neighbors = n_neighbors
-        self.min_dist = min_dist
+        self.svd_components = int(svd_components)
+        self.umap_components = int(umap_components)
+        self.use_gpu = bool(use_gpu)
+        self.n_neighbors = int(n_neighbors)
+        self.min_dist = float(min_dist)
         self.metric = metric
-        self.extra = kwargs  # reserved for future
+        self.random_state = int(random_state)
 
-        # For compatibility with the protocol:
-        self.n_components = umap_components
+        self.n_components = self.umap_components
 
-    # ------------------------------------------------------------------
+    def _select_umap_backend(self) -> Tuple[str, Type | None]:
+        gpu_ok = self.use_gpu and _GPU_UMAP_IMPORTED and gpu_utils.is_gpu_available()
+        if gpu_ok:
+            return "GPU", GPUUMAP
+        return "CPU", CPUUMAP
 
     def reduce(self, X: np.ndarray) -> np.ndarray:
-        """
-        Apply SVD then UMAP.
+        if not isinstance(X, np.ndarray):
+            raise TypeError(f"TwoStageReducer expected numpy.ndarray, got {type(X)}")
 
-        Ensures dtype float32 for GPU compatibility.
-        """
-        if X.ndim != 2:
-            raise ValueError(f"Expected 2D matrix, got shape={X.shape}")
-
-        n_rows, n_cols = X.shape
-        vram = get_device_info().get("total", 0)
+        if X.dtype != np.float32:
+            X = X.astype(np.float32, copy=False)
 
         logger.info(
-            f"TwoStageReducer: X=({n_rows}, {n_cols}), "
-            f"GPU={self.use_gpu}, SVD={self.svd_components}, UMAP={self.umap_components}, "
-            f"VRAM≈{vram:.1f} GB"
+            "TwoStageReducer: X=%s, use_gpu=%s, SVD=%d → UMAP=%d, seed=%d",
+            tuple(X.shape),
+            self.use_gpu,
+            self.svd_components,
+            self.umap_components,
+            self.random_state,
         )
 
-        # ---- Ensure float32 or float64 ----
-        if X.dtype not in (np.float32, np.float64):
-            logger.info(
-                f"Converting input from {X.dtype} → float32 for GPU compatibility."
-            )
-            X = X.astype(np.float32)
+        svd = SVDReducer(
+            n_components=self.svd_components,
+            use_gpu=self.use_gpu,
+            random_state=self.random_state,
+        )
+        X_svd = svd.reduce(X)
 
-        # ==========================================================
-        # Stage 1 — SVD (GPU or CPU)
-        # ==========================================================
-        if self.use_gpu:
-            try:
-                svd = GPUSVD(n_components=self.svd_components)
-                X_svd = svd.fit_transform(X)
-                logger.info(
-                    f"Stage 1 (GPU SVD): reduced {n_cols} → {self.svd_components}"
-                )
-            except Exception as e:
-                logger.warning(f"GPU SVD failed ({e}) → falling back to CPU.")
-                self.use_gpu = False
-                svd = CPUSVD(n_components=self.svd_components)
-                X_svd = svd.fit_transform(X)
-                logger.info(
-                    f"Stage 1 (CPU SVD): reduced {n_cols} → {self.svd_components}"
-                )
-        else:
-            svd = CPUSVD(n_components=self.svd_components)
-            X_svd = svd.fit_transform(X)
-            logger.info(
-                f"Stage 1 (CPU SVD): reduced {n_cols} → {self.svd_components}"
-            )
+        backend_name, UMAPClass = self._select_umap_backend()
+        logger.info("TwoStageReducer: UMAP stage on %s backend…", backend_name)
 
-        # Ensure correct dtype before UMAP
-        if X_svd.dtype not in (np.float32, np.float64):
-            X_svd = X_svd.astype(np.float32)
+        if UMAPClass is None:
+            raise RuntimeError(f"UMAP backend {backend_name} unavailable.")
 
-        # ==========================================================
-        # Stage 2 — UMAP (GPU or CPU)
-        # ==========================================================
-        if self.use_gpu:
-            try:
-                umap = GPUUMAP(
+        try:
+            if backend_name == "GPU":
+                X_gpu = cp.asarray(X_svd) if cp is not None else X_svd
+                um = UMAPClass(
                     n_components=self.umap_components,
                     n_neighbors=self.n_neighbors,
                     min_dist=self.min_dist,
                     metric=self.metric,
-                    verbose=False,
+                    random_state=self.random_state,
                 )
-                X_umap = umap.fit_transform(X_svd)
-                logger.info(
-                    f"Stage 2 (GPU UMAP): reduced "
-                    f"{self.svd_components} → {self.umap_components}"
+                Y_gpu = um.fit_transform(X_gpu)
+                Y = (
+                    cp.asnumpy(Y_gpu)
+                    if cp is not None and hasattr(cp, "asnumpy")
+                    else np.array(Y_gpu)
                 )
-            except Exception as e:
-                logger.warning(f"GPU UMAP failed ({e}) → falling back to CPU.")
-                umap = CPUUMAP(
-                    n_components=self.umap_components,
-                    n_neighbors=self.n_neighbors,
-                    min_dist=self.min_dist,
-                    metric=self.metric,
-                    verbose=False,
-                )
-                X_umap = umap.fit_transform(X_svd)
-                logger.info(
-                    f"Stage 2 (CPU UMAP): reduced "
-                    f"{self.svd_components} → {self.umap_components}"
-                )
-        else:
-            umap = CPUUMAP(
+                return Y.astype(np.float32, copy=False)
+
+            if CPUUMAP is None:
+                raise RuntimeError("CPU UMAP unavailable.")
+
+            um = CPUUMAP(
                 n_components=self.umap_components,
                 n_neighbors=self.n_neighbors,
                 min_dist=self.min_dist,
                 metric=self.metric,
-                verbose=False,
+                random_state=self.random_state,
             )
-            X_umap = umap.fit_transform(X_svd)
-            logger.info(
-                f"Stage 2 (CPU UMAP): reduced "
-                f"{self.svd_components} → {self.umap_components}"
+            Y = um.fit_transform(X_svd)
+            return Y.astype(np.float32, copy=False)
+
+        except Exception as e:
+            logger.warning(
+                "UMAP %s backend failed (%s). Falling back to CPU UMAP…",
+                backend_name,
+                e,
             )
 
-        # Guarantee numpy return
-        X_umap = np.asarray(X_umap, dtype=np.float32)
-        return X_umap
+            if CPUUMAP is None:
+                raise RuntimeError("UMAP unavailable on both GPU and CPU.") from e
+
+            um = CPUUMAP(
+                n_components=self.umap_components,
+                n_neighbors=self.n_neighbors,
+                min_dist=self.min_dist,
+                metric=self.metric,
+                random_state=self.random_state,
+            )
+            Y = um.fit_transform(X_svd)
+            return Y.astype(np.float32, copy=False)

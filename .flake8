@@ -1,4 +1,27 @@
 [flake8]
-max-line-length = 88
-extend-ignore = E203, W503
-exclude = .git,__pycache__,.mypy_cache,.pytest_cache,build,dist
+max-line-length = 99
+
+# Black compatibility
+extend-ignore =
+    E203,
+    W503,
+
+# Ignore generated / external dirs
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    .mypy_cache,
+    .pytest_cache,
+    data_cache,
+    notebooks,
+
+# Tests get relaxed rules (assert style, magic numbers, unused vars)
+per-file-ignores =
+    tests/*.py: S101, D, DAR, RST, F401, F841
+
+# Optional import-order plugin:
+# import-order-style = google
+# application-import-names = phrasely
