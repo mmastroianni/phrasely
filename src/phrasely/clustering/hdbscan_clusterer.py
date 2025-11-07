@@ -5,6 +5,7 @@ import numpy as np
 from hdbscan import HDBSCAN as CPUHDBSCAN
 
 from phrasely.utils import gpu_utils
+
 # Expose for monkeypatching in tests
 is_gpu_available = gpu_utils.is_gpu_available
 

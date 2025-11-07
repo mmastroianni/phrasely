@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 try:
     import cupy as cp
     from cuml.decomposition import TruncatedSVD as GPUSVD
+
     _GPU_SVD_IMPORTED = True
 except Exception:
     _GPU_SVD_IMPORTED = False
@@ -74,7 +75,8 @@ class SVDReducer:
             new_components = max(1, X.shape[1] - 1)
             logger.warning(
                 "SVDReducer: reducing n_components from %d to %d",
-                self.n_components, new_components
+                self.n_components,
+                new_components,
             )
 
             n_components = new_components
