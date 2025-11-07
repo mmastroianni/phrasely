@@ -109,7 +109,7 @@ class PhraseEmbedder:
         """
         logger.info("Using hashing-based fake embeddings (CI mode).")
 
-        out = np.zeros((len(phrases), 64), dtype=np.float32)
+        out: np.ndarray = np.zeros((len(phrases), 64), dtype=np.float32)
         for i, p in enumerate(phrases):
             h = abs(hash(p))
             np.random.seed(h % 2**32)
