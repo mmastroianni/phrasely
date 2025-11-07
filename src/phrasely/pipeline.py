@@ -113,8 +113,11 @@ def run_pipeline(
             max_phrases_kw = None  # ignore if malformed
 
     logger.info("▶️  Loading and embedding phrases...")
-    embedder = PhraseEmbedder()
-    embedder.device = "cuda" if use_gpu and torch.cuda.is_available() else "cpu"
+
+    # ✅ Initialize the embedder on the correct device at construction time
+    embedder = PhraseEmbedder(
+        device="cuda" if use_gpu and torch.cuda.is_available() else "cpu"
+    )
 
     loader = loader_cls(**loader_kwargs)
 
@@ -130,7 +133,9 @@ def run_pipeline(
             phrases.extend(batch_phrases)
             emb_batches.append(batch_emb)
 
-            logger.info(f"Streamed batch {i}: +{len(batch_phrases):,} phrases (total {len(phrases):,})")
+            logger.info(
+                f"Streamed batch {i}: +{len(batch_phrases):,} phrases (total {len(phrases):,})"
+            )
             if max_phrases_kw and len(phrases) >= max_phrases_kw:
                 logger.info(f"Reached max_phrases={max_phrases_kw} — stopping.")
                 break
@@ -239,7 +244,9 @@ def run_pipeline(
 
     # --- Results
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    logger.info(f"✅ Pipeline complete: {n_clusters} clusters, {len(medoid_phrases)} medoids.")
+    logger.info(
+        f"✅ Pipeline complete: {n_clusters} clusters, {len(medoid_phrases)} medoids."
+    )
 
     return PipelineResult(
         phrases=phrases,
