@@ -6,6 +6,9 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+import os
+os.environ["TRANSFORMERS_NO_ADDITIONAL_CHAT_TEMPLATES"] = "1"
+
 
 class PhraseEmbedder:
     """
@@ -75,7 +78,16 @@ class PhraseEmbedder:
             from sentence_transformers import SentenceTransformer
 
             logger.info(f"Loading SentenceTransformer ({self.model_name}) on {device}")
-            model = SentenceTransformer(self.model_name, device=device)
+            model = SentenceTransformer(
+                self.model_name,
+                device=device,
+                trust_remote_code=False,
+                local_files_only=False,
+                cache_folder=None,
+                backend="torch",
+                model_kwargs={"trust_remote_code": False},
+                tokenizer_kwargs={"trust_remote_code": False},
+            )
 
             # Optional fp16 (GPU only)
             if device == "cuda" and self.prefer_fp16:
