@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Iterator, List
+from typing import Iterator, List, Optional
 
 import pandas as pd
 from datasets import load_dataset
@@ -46,7 +46,7 @@ class LAIONLoader:
         caption_key: str = "TEXT",
         batch_size: int = 20_000,
         max_phrases: Optional[int] = None,
-        max_shards: Optional[int] = None
+        max_shards: Optional[int] = None,
     ):
         self.dataset_name = dataset_name
         self.split = split
