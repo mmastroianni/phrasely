@@ -125,3 +125,13 @@ class CoyoOfflineLoader:
 
                     if self.max_phrases is not None and total >= self.max_phrases:
                         return
+
+
+    def load(self) -> list[str]:
+        """
+        Convenience: return all phrases as a single list.
+        """
+        phrases: list[str] = []
+        for df in self.stream_load():
+            phrases.extend(df["phrase"].tolist())
+        return phrases
