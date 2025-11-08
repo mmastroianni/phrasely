@@ -1,7 +1,4 @@
 name: phrasely-gpu
-env_name: gpu
-env_type: development
-
 channels:
   - rapidsai
   - nvidia
@@ -12,45 +9,41 @@ channel_priority: strict
 dependencies:
   - python=3.10
 
-  # RAPIDS 24.06 core (CUDA-12.x compatible)
-  - cudf=24.06
+  # RAPIDS (GPU SVD + GPU HDBSCAN)
   - cuml=24.06
-  - cugraph=24.06
-  - cupy=13.*             # ✅ explicitly pin cupy for GPU utils
-  - pyarrow>=15.0         # ✅ required for cc100_offline_loader
+  - cupy=13.*
 
-  # Core scientific + ML stack
+  # Core scientific stack
   - numpy=1.26.*
-  - pandas=2.2.*
+  - scipy
   - scikit-learn=1.5.*
   - hdbscan
-  - umap-learn>=0.5.6     # ✅ required for visualization reducer
+  - umap-learn>=0.5.6
 
-  # GPU PyTorch stack
+  # PyTorch GPU
   - pytorch
   - torchvision
   - torchaudio
-  - pytorch-cuda=12.1     # ensures GPU build of PyTorch
-  - sentence-transformers=3.0.*
+  - pytorch-cuda=12.1
 
-  # S3 / AWS
+  # AWS / IO
   - boto3
-  - s3fs                  # fast parquet/arrow access
+  - s3fs
+  - pyarrow>=15.0
 
-  # Utilities and dev tools
+  # Utilities
   - tqdm
-  - psutil
   - pyyaml
   - joblib
-  - jupyterlab
-  - black
-  - flake8
-  - mypy
-  - pytest
-  - matplotlib>=3.8
-  - seaborn
+  - psutil
 
-  # Optional extras
+  # Jupyter
+  - jupyterlab
+  - ipykernel
+
+  # Optional plotting
+  - matplotlib>=3.8
+
   - pip:
+      - sentence-transformers>=3.0
       - rapidfuzz>=3.6.1
-      - types-requests
