@@ -1,0 +1,32 @@
+name: phrasely-gpu
+channels:
+  - rapidsai
+  - nvidia
+  - conda-forge
+channel_priority: strict
+
+dependencies:
+  - python=3.10
+
+  - cuml=24.06
+  - cupy=13.*
+
+  - numpy=1.26.*
+  - scipy
+  - scikit-learn=1.5.*
+  - hdbscan
+  - umap-learn>=0.5.6
+
+  - pyarrow>=15.0
+  - s3fs
+  - boto3
+
+  - psutil
+  - joblib
+  - pyyaml
+  - tqdm
+
+  - jupyterlab
+  - ipykernel
+
+  - matplotlib>=3.8

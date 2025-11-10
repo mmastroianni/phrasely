@@ -1,8 +1,21 @@
 [flake8]
 max-line-length = 99
 
-# Black compatibility
 extend-ignore =
+    D100,
+    D101,
+    D102,
+    D103,
+    D104,
+    D105,
+    D107,
+    D200,
+    D202,
+    D205,
+    D400,
+    D401,
+    I100,
+    I201,
     E203,
     W503,
 

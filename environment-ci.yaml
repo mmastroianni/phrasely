@@ -28,3 +28,4 @@ dependencies:
     - s3fs                  # fast parquet/arrow access
   - pip:
       - rapidfuzz>=3.6.1
+      - types-requests
