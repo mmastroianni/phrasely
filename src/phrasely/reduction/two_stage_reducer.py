@@ -68,11 +68,7 @@ class TwoStageReducer:
     # --------------------------------------------------------------
 
     def _select_umap_backend(self) -> Tuple[str, Type | None]:
-        if (
-            self.use_gpu_umap
-            and _GPU_UMAP_IMPORTED
-            and gpu_utils.is_gpu_available()
-        ):
+        if self.use_gpu_umap and _GPU_UMAP_IMPORTED and gpu_utils.is_gpu_available():
             return "GPU", GPUUMAP
         return "CPU", CPUUMAP
 

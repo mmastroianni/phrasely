@@ -76,9 +76,7 @@ class CoyoOfflineLoader:
                 if "text" in df.columns:
                     df = df.rename(columns={"text": "phrase"})
                 else:
-                    raise ValueError(
-                        f"Shard {fpath} missing expected 'phrase' or 'text' columns."
-                    )
+                    raise ValueError(f"Shard {fpath} missing expected 'phrase' or 'text' columns.")
 
             # Drop NAs to stay consistent with CC100 loaders
             df = df.dropna(subset=["phrase"])
@@ -125,7 +123,6 @@ class CoyoOfflineLoader:
 
                     if self.max_phrases is not None and total >= self.max_phrases:
                         return
-
 
     def load(self) -> list[str]:
         """

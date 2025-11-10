@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -6,7 +7,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-import os
+
 os.environ["TRANSFORMERS_NO_ADDITIONAL_CHAT_TEMPLATES"] = "1"
 
 
