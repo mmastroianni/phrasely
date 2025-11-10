@@ -45,6 +45,7 @@ class TwoStageReducer:
         self,
         svd_components: int = 100,
         umap_components: int = 15,
+        use_gpu: bool | None = None,  # backward compat
         use_gpu_svd: bool = True,
         use_gpu_umap: bool = True,
         n_neighbors: int = 15,
@@ -52,6 +53,11 @@ class TwoStageReducer:
         metric: str = "cosine",
         random_state: int = 42,
     ):
+        # Backward-compat alias
+        if use_gpu is not None:
+            use_gpu_svd = bool(use_gpu)
+            use_gpu_umap = bool(use_gpu)
+
         self.svd_components = int(svd_components)
         self.umap_components = int(umap_components)
 
